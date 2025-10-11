@@ -1,7 +1,8 @@
-from picamera2 import Picamera2, Preview
+from picamera2 import Picamera2
+import cv2
+import numpy as np
 import sys
 import os
-import time
 
 def main():
     picam2 = None
@@ -16,31 +17,22 @@ def main():
         picam2.configure(config)
         picam2.start()
         
-        # Check if we have a display
-        if 'DISPLAY' in os.environ:
-            print("Display detected - starting preview window...")
-            try:
-                # Try to start preview with Qt backend
-                picam2.start_preview(Preview.QTGL)
-                print("Camera preview window opened. Press Ctrl+C to stop.")
-            except Exception as e:
-                print(f"Qt preview failed: {e}")
-                try:
-                    # Fallback to DRM preview
-                    picam2.start_preview(Preview.DRM)
-                    print("Camera preview window opened (DRM). Press Ctrl+C to stop.")
-                except Exception as e2:
-                    print(f"DRM preview also failed: {e2}")
-                    print("Camera is running but no preview window will show.")
-                    print("Press Ctrl+C to stop.")
-        else:
-            print("No display detected (running headless)")
-            print("Camera is running but no preview window will show.")
-            print("Press Ctrl+C to stop.")
+        print("Camera preview window opened. Press 'q' to quit.")
         
-        # Keep the camera running until interrupted
+        # Main loop to display frames
         while True:
-            time.sleep(0.1)  # Small sleep to prevent busy waiting
+            # Capture frame from camera
+            frame = picam2.capture_array()
+            
+            # Convert from RGB to BGR for OpenCV
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # Display the frame
+            cv2.imshow('Camera Preview', frame_bgr)
+            
+            # Check for 'q' key press to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
                 
     except KeyboardInterrupt:
         print("\nStopping camera...")
@@ -49,7 +41,8 @@ def main():
     finally:
         if picam2 is not None:
             picam2.close()
-            print("Camera stopped")
+        cv2.destroyAllWindows()
+        print("Camera stopped")
         sys.exit(0)
 
 if __name__ == "__main__":

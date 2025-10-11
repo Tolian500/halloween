@@ -1,7 +1,4 @@
 # Raspberry Pi Camera Requirements
 picamera2>=0.3.12
-Pillow>=9.0.0
-numpy>=1.21.0
-
-# Optional: For advanced image processing
 opencv-python>=4.5.0
+numpy>=1.21.0
