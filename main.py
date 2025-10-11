@@ -1,6 +1,7 @@
-from picamera2 import Picamera2
+from picamera2 import Picamera2, Preview
 import sys
 import os
+import time
 
 def main():
     picam2 = None
@@ -18,8 +19,20 @@ def main():
         # Check if we have a display
         if 'DISPLAY' in os.environ:
             print("Display detected - starting preview window...")
-            picam2.start_preview()
-            print("Camera preview window opened. Press Ctrl+C to stop.")
+            try:
+                # Try to start preview with Qt backend
+                picam2.start_preview(Preview.QTGL)
+                print("Camera preview window opened. Press Ctrl+C to stop.")
+            except Exception as e:
+                print(f"Qt preview failed: {e}")
+                try:
+                    # Fallback to DRM preview
+                    picam2.start_preview(Preview.DRM)
+                    print("Camera preview window opened (DRM). Press Ctrl+C to stop.")
+                except Exception as e2:
+                    print(f"DRM preview also failed: {e2}")
+                    print("Camera is running but no preview window will show.")
+                    print("Press Ctrl+C to stop.")
         else:
             print("No display detected (running headless)")
             print("Camera is running but no preview window will show.")
@@ -27,7 +40,7 @@ def main():
         
         # Keep the camera running until interrupted
         while True:
-            pass
+            time.sleep(0.1)  # Small sleep to prevent busy waiting
                 
     except KeyboardInterrupt:
         print("\nStopping camera...")
