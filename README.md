@@ -1,2 +1,0 @@
-# halloween
-halloween mask
