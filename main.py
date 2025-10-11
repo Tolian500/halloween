@@ -1,5 +1,6 @@
 from picamera2 import Picamera2
 import sys
+import os
 
 def main():
     picam2 = None
@@ -8,10 +9,21 @@ def main():
         # Initialize camera
         print("Starting camera...")
         picam2 = Picamera2()
-        picam2.configure(picam2.create_preview_configuration())
+        
+        # Create preview configuration
+        config = picam2.create_preview_configuration()
+        picam2.configure(config)
         picam2.start()
         
-        print("Camera view started. Press Ctrl+C to stop.")
+        # Check if we have a display
+        if 'DISPLAY' in os.environ:
+            print("Display detected - starting preview window...")
+            picam2.start_preview()
+            print("Camera preview window opened. Press Ctrl+C to stop.")
+        else:
+            print("No display detected (running headless)")
+            print("Camera is running but no preview window will show.")
+            print("Press Ctrl+C to stop.")
         
         # Keep the camera running until interrupted
         while True:
