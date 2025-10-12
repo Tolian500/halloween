@@ -5,6 +5,8 @@ numpy>=1.21.0
 
 
 # Requirements for GC9A01 display test
-adafruit-circuitpython-rgb-display==1.15.0
-adafruit-circuitpython-gc9a01==1.4.0
+# Note: Adafruit CircuitPython libraries are not available via pip
+# Install them using: sudo apt install python3-pil python3-rpi.gpio
 Pillow>=9.0.0
+RPi.GPIO>=0.7.0
+spidev>=3.5
