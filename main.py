@@ -318,63 +318,9 @@ class EyeTracker:
                 time.sleep(0.1)
     
     def start(self):
-        """Start the eye tracker"""
-        print("Starting Eye Tracker...")
-        
-        # Initialize components
-        if not self.init_display():
-            return False
-        if not self.init_camera():
-            return False
-        if not self.init_face_detection():
-            return False
-        
-        self.running = True
-        
-        # Start threads
-        self.display_thread = threading.Thread(target=self.display_thread_func, daemon=True)
-        self.display_thread.start()
-        
-        camera_thread = threading.Thread(target=self.camera_thread, daemon=True)
-        camera_thread.start()
-        
-        print("Eye Tracker started! Press Ctrl+C to stop.")
-        
-        try:
-            # Main loop for OpenCV display (optional)
-            while self.running:
-                try:
-                    frame, motion_boxes = self.frame_queue.get(timeout=1.0)
-                    
-                    # Draw motion rectangles on frame
-                    for (x, y, w, h) in motion_boxes:
-                        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                        # Draw center point
-                        center_x = x + w//2
-                        center_y = y + h//2
-                        cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-                    
-                    # Convert RGB to BGR for OpenCV
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    
-                    # Display frame at full resolution (already 640x480)
-                    cv2.imshow('Motion Detection', frame_bgr)
-                    
-                    # Check for 'q' key press to quit
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-                        
-                except queue.Empty:
-                    continue
-                    
-        except KeyboardInterrupt:
-            print("\nStopping Eye Tracker...")
-        finally:
-            self.stop()  
-    except KeyboardInterrupt:
-            print("\nStopping Eye Tracker...")
-    finally:
-            self.stop()
+        """Start the eye tracker - uses external run function"""
+        from eye_tracker_main import run_eye_tracker
+        run_eye_tracker(self)
     
     def stop(self):
         """Stop the eye tracker"""
