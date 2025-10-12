@@ -338,7 +338,7 @@ class EyeTracker:
                 # 60 FPS display update
                 time.sleep(1.0/60.0)
                 
-    except Exception as e:
+            except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     
