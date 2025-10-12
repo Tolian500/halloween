@@ -47,8 +47,8 @@ class EyeTracker:
         self.prev_frame = None
         self.motion_threshold = 25
         self.min_motion_area = 500
-        self.camera_width = 320
-        self.camera_height = 240
+        self.camera_width = 640
+        self.camera_height = 480
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -64,9 +64,9 @@ class EyeTracker:
         """Initialize the camera"""
         try:
             self.camera = Picamera2()
-            # Use lower resolution for better performance
+            # Use 640x480 for full wide angle view
             config = self.camera.create_preview_configuration(
-                main={"size": (320, 240), "format": "RGB888"},
+                main={"size": (640, 480), "format": "RGB888"},
                 controls={"FrameRate": 30}
             )
             self.camera.configure(config)
@@ -178,8 +178,11 @@ class EyeTracker:
     
     def detect_motion(self, frame):
         """Detect motion using frame differencing - much faster than face detection"""
+        # Downsample for faster processing (320x240)
+        small_frame = cv2.resize(frame, (320, 240))
+        
         # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        gray = cv2.cvtColor(small_frame, cv2.COLOR_RGB2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
         
         # Initialize previous frame
@@ -206,13 +209,18 @@ class EyeTracker:
         
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > self.min_motion_area and area > max_area:
+            if area > 250 and area > max_area:  # Adjusted for smaller resolution
                 max_area = area
                 largest_contour = contour
         
         if largest_contour is not None:
-            # Get bounding box
+            # Get bounding box and scale back to original resolution
             x, y, w, h = cv2.boundingRect(largest_contour)
+            # Scale coordinates back to 640x480
+            x = int(x * 2)
+            y = int(y * 2)
+            w = int(w * 2)
+            h = int(h * 2)
             return [(x, y, w, h)]
         
         return []
@@ -349,22 +357,19 @@ class EyeTracker:
                     # Convert RGB to BGR for OpenCV
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     
-                    # Resize for better viewing (make it wider)
-                    display_frame = cv2.resize(frame_bgr, (640, 480), interpolation=cv2.INTER_LINEAR)
-                    
-                    # Display frame
-                    cv2.imshow('Motion Detection', display_frame)
-                    
-                    # Check for 'q' key press to quit
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
+                    # Display frame at full resolution (already 640x480)
+                    cv2.imshow('Motion Detection', frame_bgr)
+            
+            # Check for 'q' key press to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
                         
                 except queue.Empty:
                     continue
-                    
-        except KeyboardInterrupt:
+                
+    except KeyboardInterrupt:
             print("\nStopping Eye Tracker...")
-        finally:
+    finally:
             self.stop()
     
     def stop(self):
