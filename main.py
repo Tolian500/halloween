@@ -64,14 +64,39 @@ class EyeTracker:
         """Initialize the camera"""
         try:
             self.camera = Picamera2()
-            # Use 640x480 for full wide angle view
-            config = self.camera.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                controls={"FrameRate": 30}
-            )
-            self.camera.configure(config)
+            # Get the sensor's maximum resolution
+            # Try full resolution first, fallback to smaller if needed
+            try:
+                # Try 1920x1080 (Full HD)
+                config = self.camera.create_preview_configuration(
+                    main={"size": (1920, 1080), "format": "RGB888"}
+                )
+                self.camera.configure(config)
+                self.camera_width = 1920
+                self.camera_height = 1080
+                print("Using 1920x1080 resolution")
+            except:
+                try:
+                    # Try 1640x1232 (IMX219 native)
+                    config = self.camera.create_preview_configuration(
+                        main={"size": (1640, 1232), "format": "RGB888"}
+                    )
+                    self.camera.configure(config)
+                    self.camera_width = 1640
+                    self.camera_height = 1232
+                    print("Using 1640x1232 resolution")
+                except:
+                    # Fallback to 640x480
+                    config = self.camera.create_preview_configuration(
+                        main={"size": (640, 480), "format": "RGB888"}
+                    )
+                    self.camera.configure(config)
+                    self.camera_width = 640
+                    self.camera_height = 480
+                    print("Using 640x480 resolution")
+            
             self.camera.start()
-            print("Camera initialized successfully!")
+            print(f"Camera initialized successfully at {self.camera_width}x{self.camera_height}!")
             return True
         except Exception as e:
             print(f"Failed to initialize camera: {e}")
@@ -313,7 +338,7 @@ class EyeTracker:
                 # 60 FPS display update
                 time.sleep(1.0/60.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     

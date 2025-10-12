@@ -53,8 +53,15 @@ def run_eye_tracker(eye_tracker):
                 # Convert RGB to BGR for OpenCV
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 
-                # Display frame at full resolution (already 640x480)
-                cv2.imshow('Motion Detection', frame_bgr)
+                # Resize for display if needed (keep aspect ratio)
+                display_height = 480
+                display_width = int(frame_bgr.shape[1] * (display_height / frame_bgr.shape[0]))
+                if display_width > 1280:
+                    display_width = 1280
+                    display_height = int(frame_bgr.shape[0] * (display_width / frame_bgr.shape[1]))
+                
+                display_frame = cv2.resize(frame_bgr, (display_width, display_height))
+                cv2.imshow('Motion Detection', display_frame)
                 
                 # Check for 'q' key press to quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):
