@@ -121,8 +121,8 @@ class EyeTracker:
             for path in cascade_paths:
                 if os.path.exists(path):
                     cascade_path = path
-                    break
-            
+                break
+                
             if cascade_path is None:
                 print("Haar cascade file not found. Downloading...")
                 # Download the cascade file
@@ -148,13 +148,13 @@ class EyeTracker:
             return False
     
     def create_eye_image(self, eye_x, eye_y):
-        """Create BIGGER eye image with AGGRESSIVE caching - 2x size"""
+        """Create BIGGER eye image with AGGRESSIVE caching + RGB565 pre-conversion"""
         # Round to nearest 20 pixels for MORE caching (less unique images)
         cache_x = round(eye_x / 20) * 20
         cache_y = round(eye_y / 20) * 20
         cache_key = (cache_x, cache_y)
         
-        # Check cache first
+        # Check cache first (cache stores RGB565 bytes directly!)
         if cache_key in self.eye_cache:
             return self.eye_cache[cache_key]
         
@@ -184,16 +184,23 @@ class EyeTracker:
         mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 15**2
         img_array[mask_highlight] = [255, 255, 255]  # White highlight
         
-        # Convert to PIL Image
-        image = Image.fromarray(img_array)
+        # Convert RGB888 to RGB565 using NumPy (10x faster than PIL!)
+        r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
+        g = (img_array[:, :, 1] >> 2).astype(np.uint16)  # 6 bits
+        b = (img_array[:, :, 2] >> 3).astype(np.uint16)  # 5 bits
+        rgb565 = (r << 11) | (g << 5) | b
+        
+        # Convert to bytes (big-endian for SPI)
+        rgb565_bytes = rgb565.astype('>u2').tobytes()
         
         # Cache management - keep only recent entries
         if len(self.eye_cache) >= self.cache_size:
             # Remove oldest entry
             self.eye_cache.pop(next(iter(self.eye_cache)))
         
-        self.eye_cache[cache_key] = image
-        return image
+        # Cache the RGB565 bytes directly!
+        self.eye_cache[cache_key] = rgb565_bytes
+        return rgb565_bytes
     
     def detect_motion(self, frame):
         """ULTRA-FAST motion detection at 40×40 pixels!"""
@@ -390,8 +397,24 @@ class EyeTracker:
                 # Only update if moved more than 20 pixels (matches cache granularity)
                 if rounded_pos != self.last_rendered_pos:
                     t0 = time.time()
-                    eye_image = self.create_eye_image(int(eye_x), int(eye_y))
-                    self.display.image(eye_image)
+                    rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y))
+                    
+                    # Send RGB565 bytes directly to display (FAST!)
+                    self.display._write_command(0x2A)  # Column address set
+                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+                    self.display._write_command(0x2B)  # Row address set
+                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+                    self.display._write_command(0x2C)  # Memory write
+                    
+                    # Send RGB565 data in optimized chunks
+                    GPIO.output(self.display.dc_pin, GPIO.HIGH)
+                    GPIO.output(self.display.cs_pin, GPIO.LOW)
+                    chunk_size = 4000
+                    for i in range(0, len(rgb565_bytes), chunk_size):
+                        chunk = rgb565_bytes[i:i+chunk_size]
+                        self.display.spi.writebytes(chunk)
+                    GPIO.output(self.display.cs_pin, GPIO.HIGH)
+                    
                     display_time = (time.time() - t0) * 1000  # ms
                     self.timing_display.append(display_time)
                     self.last_rendered_pos = rounded_pos
@@ -399,7 +422,7 @@ class EyeTracker:
                 # 15 FPS - SPI transfer is SLOW (60-80ms per frame!)
                 time.sleep(1.0/15.0)
                 
-            except Exception as e:
+    except Exception as e:
                                 print(f"Display thread error: {e}")
                                 time.sleep(0.1)
     
