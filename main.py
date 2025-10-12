@@ -35,6 +35,14 @@ class EyeTracker:
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
         self.eye_movement_speed = 0.3  # Even faster response for smooth tracking
+        self.last_motion_time = time.time()
+        self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
+        
+        # Blinking
+        self.is_blinking = False
+        self.blink_state = 1.0  # 1.0 = open, 0.0 = closed
+        self.last_blink_time = time.time()
+        self.next_blink_delay = np.random.uniform(2, 5)  # Random blink every 2-5 seconds
         
         # Performance monitoring
         self.frame_count = 0
@@ -147,12 +155,13 @@ class EyeTracker:
             print(f"Failed to initialize face detection: {e}")
             return False
     
-    def create_eye_image(self, eye_x, eye_y):
-        """Create BIGGER eye image with BALANCED caching + RGB565 pre-conversion"""
+    def create_eye_image(self, eye_x, eye_y, blink_state=1.0):
+        """Create eye image with blinking support + RGB565 pre-conversion"""
         # Round to nearest 10 pixels for smoother movement (still good caching)
         cache_x = round(eye_x / 10) * 10
         cache_y = round(eye_y / 10) * 10
-        cache_key = (cache_x, cache_y)
+        blink_key = round(blink_state * 10) / 10  # Cache different blink states
+        cache_key = (cache_x, cache_y, blink_key)
         
         # Check cache first (cache stores RGB565 bytes directly!)
         if cache_key in self.eye_cache:
@@ -161,28 +170,49 @@ class EyeTracker:
         # Create new image with NumPy (faster than PIL)
         img_array = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
         
-        # BIGGER Eye parameters (2x size)
-        iris_radius = 60  # Was 60
-        pupil_radius = 30  # Was 30
+        # Smaller eye for faster display (40% size reduction)
+        iris_radius = 50  # Was 60
+        pupil_radius = 25  # Was 30
         
         # Calculate eye position (clamp to display bounds with margin)
         eye_x = int(max(iris_radius, min(WIDTH - iris_radius, eye_x)))
         eye_y = int(max(iris_radius, min(HEIGHT - iris_radius, eye_y)))
         
-        # Draw iris (red circle) using NumPy
+        # Apply blink (compress vertically)
         y, x = np.ogrid[:HEIGHT, :WIDTH]
-        mask_iris = (x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2
-        img_array[mask_iris] = [200, 50, 25]  # Red iris
         
-        # Draw pupil (black circle)
-        mask_pupil = (x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2
-        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
-        
-        # Draw highlight (white circle) - offset
-        highlight_x = eye_x + 15
-        highlight_y = eye_y - 10
-        mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 15**2
-        img_array[mask_highlight] = [255, 255, 255]  # White highlight
+        if blink_state < 1.0:
+            # Create eyelid effect (close from top and bottom)
+            eyelid_top = int(HEIGHT//2 - (HEIGHT//2) * blink_state)
+            eyelid_bottom = int(HEIGHT//2 + (HEIGHT//2) * blink_state)
+            
+            # Only draw eye in visible area
+            if eyelid_bottom > eyelid_top:
+                # Draw iris (red circle) with blink mask
+                mask_iris = ((x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                img_array[mask_iris] = [200, 50, 25]  # Red iris
+                
+                # Draw pupil (black circle) with blink mask
+                mask_pupil = ((x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                img_array[mask_pupil] = [0, 0, 0]  # Black pupil
+                
+                # Draw highlight (white circle) - offset, with blink mask
+                highlight_x = eye_x + 12
+                highlight_y = eye_y - 8
+                mask_highlight = ((x - highlight_x)**2 + (y - highlight_y)**2 <= 12**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                img_array[mask_highlight] = [255, 255, 255]  # White highlight
+        else:
+            # Fully open eye
+            mask_iris = (x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2
+            img_array[mask_iris] = [200, 50, 25]  # Red iris
+            
+            mask_pupil = (x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2
+            img_array[mask_pupil] = [0, 0, 0]  # Black pupil
+            
+            highlight_x = eye_x + 12
+            highlight_y = eye_y - 8
+            mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 12**2
+            img_array[mask_highlight] = [255, 255, 255]  # White highlight
         
         # Convert RGB888 to RGB565 using NumPy (10x faster than PIL!)
         r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
@@ -246,8 +276,11 @@ class EyeTracker:
         return []
     
     def update_eye_position(self, motion_boxes):
-        """Update eye position with BIGGER movement range"""
+        """Update eye position with BIGGER movement range + return to center"""
         if motion_boxes and len(motion_boxes) > 0:
+            # Motion detected!
+            self.last_motion_time = time.time()
+            
             # Use the first detected motion
             x, y, w, h = motion_boxes[0]
             motion_center_x = x + w//2
@@ -258,14 +291,15 @@ class EyeTracker:
             norm_y = (motion_center_y - self.camera_height//2) / (self.camera_height//2)
             
             # Map to display coordinates with MUCH larger range (margin to margin)
-            # Changed from 40px margin to 10px margin for more movement
             eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 10)  # Inverted X, less margin
             eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 10)  # Less margin
             
             self.target_eye_position = (eye_x, eye_y)
         else:
-            # No motion detected, return to center
-            self.target_eye_position = (WIDTH//2, HEIGHT//2)
+            # No motion detected - check timeout
+            if time.time() - self.last_motion_time > self.motion_timeout:
+                # Return to center after timeout
+                self.target_eye_position = (WIDTH//2, HEIGHT//2)
     
     def smooth_eye_movement(self):
         """Smoothly interpolate eye movement"""
@@ -390,14 +424,36 @@ class EyeTracker:
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
-                # Check if position changed enough to warrant update
-                eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10)
+                # Handle blinking
+                current_time = time.time()
+                if not self.is_blinking and (current_time - self.last_blink_time) >= self.next_blink_delay:
+                    # Start blink
+                    self.is_blinking = True
+                    self.blink_state = 1.0
                 
-                # Only update if moved more than 10 pixels (smoother movement!)
-                if rounded_pos != self.last_rendered_pos:
+                if self.is_blinking:
+                    # Animate blink (fast close, fast open)
+                    if self.blink_state > 0.0:
+                        self.blink_state -= 0.4  # Close quickly
+                        if self.blink_state < 0.0:
+                            self.blink_state = 0.0
+                    else:
+                        # Eye closed, now open
+                        self.blink_state += 0.5  # Open quickly
+                        if self.blink_state >= 1.0:
+                            self.blink_state = 1.0
+                            self.is_blinking = False
+                            self.last_blink_time = current_time
+                            self.next_blink_delay = np.random.uniform(2, 5)
+                
+                # Check if position or blink state changed
+                eye_x, eye_y = self.current_eye_position
+                rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10, round(self.blink_state * 10) / 10)
+                
+                # Only update if moved or blink state changed
+                if rounded_pos != self.last_rendered_pos or self.is_blinking:
                     t0 = time.time()
-                    rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y))
+                    rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
                     
                     # Send RGB565 bytes directly to display (FAST!)
                     self.display._write_command(0x2A)  # Column address set
