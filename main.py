@@ -80,8 +80,11 @@ class EyeTracker:
         
         # Smart clearing optimization
         self.last_clear_time = 0
-        self.clear_interval = 0.5  # Only clear every 500ms
+        self.clear_interval = 0.1  # Clear every 100ms to prevent ghosting
         self.needs_clear = True
+        self.last_clear_pos = None
+        self.full_clear_counter = 0
+        self.full_clear_interval = 20  # Full clear every 20 updates
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -503,17 +506,31 @@ class EyeTracker:
                     t0 = time.time()
                     current_time = time.time()
                     
-                    # OPTIMIZATION 1: Smart clearing - only clear when needed
-                    should_clear = (current_time - self.last_clear_time) >= self.clear_interval
+                    # OPTIMIZATION 1: Smart clearing - clear when needed or position changed significantly
+                    should_clear = ((current_time - self.last_clear_time) >= self.clear_interval or 
+                                  self.last_clear_pos is None or
+                                  abs(eye_x - self.last_clear_pos[0]) > 30 or 
+                                  abs(eye_y - self.last_clear_pos[1]) > 30)
                     
-                    if should_clear:
-                        # OPTIMIZATION 2: Draw black circle background instead of full clear
-                        # Calculate eye region to clear
-                        window_size = 120  # Larger window for background
-                        x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
-                        x_end = min(WIDTH - 1, x_start + window_size - 1)
-                        y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
-                        y_end = min(HEIGHT - 1, y_start + window_size - 1)
+                    # Full clear every N updates to prevent persistent ghosting
+                    self.full_clear_counter += 1
+                    should_full_clear = self.full_clear_counter >= self.full_clear_interval
+                    
+                    if should_clear or should_full_clear:
+                        if should_full_clear:
+                            # Full screen clear to eliminate all ghosting
+                            window_size = WIDTH
+                            x_start, x_end = 0, WIDTH - 1
+                            y_start, y_end = 0, HEIGHT - 1
+                            self.full_clear_counter = 0
+                        else:
+                            # OPTIMIZATION 2: Clear larger region to prevent ghosting
+                            # Calculate larger region to clear (covers eye movement range)
+                            window_size = 140  # Larger window to cover movement
+                            x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
+                            x_end = min(WIDTH - 1, x_start + window_size - 1)
+                            y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
+                            y_end = min(HEIGHT - 1, y_start + window_size - 1)
                         
                         # Clear only the eye region
                         self.display._write_command(0x2A)  # Column address set
@@ -550,6 +567,7 @@ class EyeTracker:
                         self.timing_spi_clear.append(spi_clear_time)
                         
                         self.last_clear_time = current_time
+                        self.last_clear_pos = (eye_x, eye_y)
                     
                     # Generate eye image
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
