@@ -240,13 +240,11 @@ class EyeTracker:
         b = (img_array[:, :, 2] >> 3).astype(np.uint16)  # 5 bits
         rgb565_small = (r << 11) | (g << 5) | b
         
-        # Scale up to full resolution using nearest neighbor (fast!)
+        # Scale up to full resolution using NumPy broadcasting (much faster!)
         rgb565_full = np.zeros((HEIGHT, WIDTH), dtype=np.uint16)
-        for i in range(render_size):
-            for j in range(render_size):
-                # Fill 2x2 block
-                rgb565_full[i*scale_factor:(i+1)*scale_factor, 
-                           j*scale_factor:(j+1)*scale_factor] = rgb565_small[i, j]
+        
+        # Use NumPy's repeat function for efficient scaling
+        rgb565_full = np.repeat(np.repeat(rgb565_small, scale_factor, axis=0), scale_factor, axis=1)
         
         # Convert to bytes (big-endian for SPI)
         rgb565_bytes = rgb565_full.astype('>u2').tobytes()
@@ -536,8 +534,8 @@ class EyeTracker:
                         clear_bytes = actual_width * actual_height * 2
                         black_pixel = b'\x00\x00'
                         
-                        # Batch send black pixels
-                        chunk_size = 4000
+                        # Batch send black pixels in smaller chunks
+                        chunk_size = 2048  # Reduced to avoid argument limit
                         for i in range(0, clear_bytes, chunk_size):
                             chunk = black_pixel * (chunk_size // 2)
                             if i + chunk_size > clear_bytes:
@@ -592,15 +590,11 @@ class EyeTracker:
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     GPIO.output(self.display.cs_pin, GPIO.LOW)
                     
-                    # Send all data in one batch if possible
-                    if len(partial_data) <= 4000:
-                        self.display.spi.writebytes(partial_data)
-                    else:
-                        # Use larger chunks for better efficiency
-                        chunk_size = 8000  # Increased chunk size
-                        for i in range(0, len(partial_data), chunk_size):
-                            chunk = partial_data[i:i+chunk_size]
-                            self.display.spi.writebytes(chunk)
+                    # Send data in smaller chunks to avoid "Argument list size exceeds 4096 bytes"
+                    chunk_size = 2048  # Reduced chunk size to avoid argument limit
+                    for i in range(0, len(partial_data), chunk_size):
+                        chunk = partial_data[i:i+chunk_size]
+                        self.display.spi.writebytes(chunk)
                     
                     GPIO.output(self.display.cs_pin, GPIO.HIGH)
                     
@@ -616,7 +610,7 @@ class EyeTracker:
                 # 20 FPS - faster updates for smoother motion
                 time.sleep(1.0/20.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
 
