@@ -42,7 +42,8 @@ class GC9A01:
         # Setup SPI
         self.spi = spidev.SpiDev()
         self.spi.open(spi_bus, spi_device)
-        self.spi.max_speed_hz = 8000000  # 8MHz
+        self.spi.max_speed_hz = 32000000  # 32MHz for faster updates
+        self.spi.mode = 0
         
         # Initialize display
         self._init_display()
@@ -148,21 +149,22 @@ class GC9A01:
         
         self._write_command(0x2C)  # Memory write
         
-        # Convert image to RGB565 and send
+        # Convert image to RGB565 and send efficiently
         pixels = []
-        for y in range(HEIGHT):
-            for x in range(WIDTH):
-                r, g, b = image.getpixel((x, y))
-                # Convert RGB888 to RGB565
-                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-                pixels.append(rgb565 >> 8)  # High byte
-                pixels.append(rgb565 & 0xFF)  # Low byte
+        # Get all pixel data at once for better performance
+        pixel_data = list(image.getdata())
         
-        # Send data in chunks
-        chunk_size = 4096
-        for i in range(0, len(pixels), chunk_size):
-            chunk = pixels[i:i + chunk_size]
-            self._write_data(chunk)
+        for r, g, b in pixel_data:
+            # Convert RGB888 to RGB565
+            rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+            pixels.append(rgb565 >> 8)  # High byte
+            pixels.append(rgb565 & 0xFF)  # Low byte
+        
+        # Send all data at once for instant update
+        GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
+        GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
+        self.spi.writebytes(pixels)
+        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
     
     def close(self):
         """Clean up resources"""
