@@ -34,13 +34,13 @@ class EyeTracker:
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
-        self.eye_movement_speed = 0.15  # Slower, smoother movement to reduce shaking
+        self.eye_movement_speed = 0.08  # Much slower, smoother movement to reduce shaking
         self.last_motion_time = time.time()
         self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
         
         # Motion smoothing to reduce shaking
         self.motion_history = []
-        self.motion_history_size = 3  # Average last 3 positions
+        self.motion_history_size = 5  # Average last 5 positions for smoother motion
         
         # Blinking (more natural timing)
         self.is_blinking = False
@@ -84,11 +84,11 @@ class EyeTracker:
         
         # Smart clearing optimization
         self.last_clear_time = 0
-        self.clear_interval = 0.05  # Clear every 50ms to prevent ghosting
+        self.clear_interval = 0.3  # Clear every 300ms to reduce flickering
         self.needs_clear = True
         self.last_clear_pos = None
         self.full_clear_counter = 0
-        self.full_clear_interval = 10  # Full clear every 10 updates
+        self.full_clear_interval = 30  # Full clear every 30 updates
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -175,9 +175,9 @@ class EyeTracker:
     
     def create_eye_image(self, eye_x, eye_y, blink_state=1.0):
         """Create eye image with blinking support + RGB565 pre-conversion"""
-        # Round to nearest 10 pixels for smoother movement (still good caching)
-        cache_x = round(eye_x / 10) * 10
-        cache_y = round(eye_y / 10) * 10
+        # Round to nearest 5 pixels for smoother movement (still good caching)
+        cache_x = round(eye_x / 5) * 5
+        cache_y = round(eye_y / 5) * 5
         blink_key = round(blink_state * 10) / 10  # Cache different blink states
         cache_key = (cache_x, cache_y, blink_key)
         
@@ -513,7 +513,7 @@ class EyeTracker:
                 
                 # OPTIMIZATION 11: Skip updates if eye position hasn't changed significantly
                 eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10, round(self.blink_state * 10) / 10)
+                rounded_pos = (round(eye_x / 5) * 5, round(eye_y / 5) * 5, round(self.blink_state * 10) / 10)
                 
                 # Only update if moved significantly or blink state changed
                 position_changed = rounded_pos != self.last_rendered_pos
@@ -523,11 +523,11 @@ class EyeTracker:
                     t0 = time.time()
                     current_time = time.time()
                     
-                    # OPTIMIZATION 1: Smart clearing - clear more frequently to prevent ghosting
+                    # OPTIMIZATION 1: Smart clearing - clear less frequently to reduce flickering
                     should_clear = ((current_time - self.last_clear_time) >= self.clear_interval or 
                                   self.last_clear_pos is None or
-                                  abs(eye_x - self.last_clear_pos[0]) > 20 or 
-                                  abs(eye_y - self.last_clear_pos[1]) > 20)
+                                  abs(eye_x - self.last_clear_pos[0]) > 50 or 
+                                  abs(eye_y - self.last_clear_pos[1]) > 50)
                     
                     # Full clear every N updates to prevent persistent ghosting
                     self.full_clear_counter += 1
