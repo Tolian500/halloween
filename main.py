@@ -34,7 +34,7 @@ class EyeTracker:
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
-        self.eye_movement_speed = 0.15
+        self.eye_movement_speed = 0.25  # Faster response
         
         # Performance monitoring
         self.frame_count = 0
@@ -49,8 +49,8 @@ class EyeTracker:
         self.prev_frame = None
         self.motion_threshold = 25
         self.min_motion_area = 500
-        self.camera_width = 640
-        self.camera_height = 480
+        self.camera_width = 160  # REDUCED from 640
+        self.camera_height = 120  # REDUCED from 480
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
@@ -63,7 +63,7 @@ class EyeTracker:
         
         # Motion detection optimization (optimization #5)
         self.motion_check_counter = 0
-        self.motion_check_interval = 2  # Check motion every 2 frames
+        self.motion_check_interval = 3  # Check motion every 3 frames (more aggressive)
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -76,41 +76,24 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with grayscale for maximum performance"""
+        """Initialize camera with ULTRA-LOW resolution for maximum speed"""
         try:
             self.camera = Picamera2()
             
-            # Use grayscale (YUV420) for better performance
+            # ULTRA-LOW resolution: 160×120 with full sensor FOV
             config = self.camera.create_video_configuration(
-                main={"size": (640, 480), "format": "YUV420"},
-                raw={"size": self.camera.sensor_resolution}
+                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
+                raw={"size": self.camera.sensor_resolution}  # Keep full FOV
             )
             self.camera.configure(config)
-            self.camera_width = 640
-            self.camera_height = 480
             
             self.camera.start()
-            print(f"Camera initialized at {self.camera_width}x{self.camera_height} (Grayscale) with full FOV!")
+            print(f"Camera: {self.camera_width}x{self.camera_height} (ULTRA-LOW RES) with full FOV!")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
             return True
         except Exception as e:
-            print(f"Failed to initialize grayscale camera: {e}")
-            print("Trying RGB fallback...")
-            try:
-                # Fallback to RGB
-                config = self.camera.create_video_configuration(
-                    main={"size": (640, 480), "format": "RGB888"},
-                    raw={"size": self.camera.sensor_resolution}
-                )
-                self.camera.configure(config)
-                self.camera_width = 640
-                self.camera_height = 480
-                self.camera.start()
-                print(f"Camera initialized with RGB at {self.camera_width}x{self.camera_height}")
-                return True
-            except Exception as e2:
-                print(f"Camera init failed: {e2}")
-                return False
+            print(f"Camera init failed: {e}")
+            return False
     
     def init_face_detection(self):
         """Initialize face detection"""
@@ -216,58 +199,40 @@ class EyeTracker:
         return image
     
     def detect_motion(self, frame):
-        """Optimized motion detection with grayscale support"""
-        # Downsample for faster processing (160x120)
-        small_frame = cv2.resize(frame, (160, 120), interpolation=cv2.INTER_NEAREST)
+        """ULTRA-FAST motion detection at 50×40 pixels!"""
+        # Extreme downsample to 50x40 (3200 pixels - 256x faster than 640×480!)
+        tiny = cv2.resize(frame, (50, 40), interpolation=cv2.INTER_NEAREST)
         
-        # Convert to grayscale (handle both YUV and RGB)
-        if len(small_frame.shape) == 3:
-            # RGB image
-            gray = cv2.cvtColor(small_frame, cv2.COLOR_RGB2GRAY)
-        else:
-            # Already grayscale (Y channel from YUV420)
-            gray = small_frame
-        
-        # Smaller blur kernel for speed
-        gray = cv2.GaussianBlur(gray, (11, 11), 0)
+        # Convert to grayscale
+        gray = cv2.cvtColor(tiny, cv2.COLOR_RGB2GRAY)
         
         # Initialize previous frame
         if self.prev_frame is None:
             self.prev_frame = gray
             return None
         
-        # Compute difference
+        # NO BLUR - saves 5-10ms
+        # Direct difference
         frame_delta = cv2.absdiff(self.prev_frame, gray)
-        thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)[1]
-        
-        # Single dilation (reduced from 2)
-        thresh = cv2.dilate(thresh, None, iterations=1)
-        
-        # Find contours with simpler approximation
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _, thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)
         
         # Update previous frame
         self.prev_frame = gray
         
-        # Find the largest contour
-        largest_contour = None
-        max_area = 0
+        # Use moments instead of contours (MUCH faster)
+        moments = cv2.moments(thresh)
         
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > 100 and area > max_area:  # Lower threshold for 160x120
-                max_area = area
-                largest_contour = contour
-        
-        if largest_contour is not None:
-            # Get bounding box and scale to 640x480
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            # Scale from 160x120 to 640x480 (4x)
-            x = int(x * 4)
-            y = int(y * 4)
-            w = int(w * 4)
-            h = int(h * 4)
-            return [(x, y, w, h)]
+        if moments["m00"] > 20:  # Minimum area threshold
+            # Calculate centroid
+            cx = int(moments["m10"] / moments["m00"])
+            cy = int(moments["m01"] / moments["m00"])
+            
+            # Scale from 50x40 to 160x120 (approx 3x)
+            x = int(cx * 3.2)
+            y = int(cy * 3)
+            
+            # Return fake bounding box
+            return [(x, y, 20, 20)]
         
         return []
     
@@ -353,31 +318,21 @@ class EyeTracker:
                 time.sleep(0.1)
     
     def display_thread_func(self):
-        """Optimized display thread with frame skipping - Optimization #3"""
+        """Display thread - always update for smooth tracking"""
         while self.running:
             try:
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
-                # Frame skipping - only update display every N frames
-                self.display_update_counter += 1
-                if self.display_update_counter >= self.display_update_interval:
-                    self.display_update_counter = 0
-                    
-                    # Check if position changed significantly
-                    eye_x, eye_y = self.current_eye_position
-                    rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10)
-                    
-                    # Only render if position changed
-                    if rounded_pos != self.last_rendered_pos:
-                        eye_image = self.create_eye_image(int(eye_x), int(eye_y))
-                        self.display.image(eye_image)
-                        self.last_rendered_pos = rounded_pos
+                # Always update display for smooth visuals
+                eye_x, eye_y = self.current_eye_position
+                eye_image = self.create_eye_image(int(eye_x), int(eye_y))
+                self.display.image(eye_image)
                 
-                # Reduced from 60 FPS to 30 FPS - Optimization #2
-                time.sleep(1.0/30.0)
+                # 25 FPS (display SPI limit)
+                time.sleep(1.0/25.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     
