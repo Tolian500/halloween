@@ -200,10 +200,13 @@ class UltraEyeTracker:
     def detect_motion_fast(self, frame):
         """Ultra-fast motion detection - no blur, no contours"""
         # Extract Y channel (luminance) - already grayscale
-        if len(frame.shape) == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)
-        else:
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        elif len(frame.shape) == 2:
             gray = frame
+        else:
+            # YUV420 format - take Y channel
+            gray = frame[:240, :]  # First 240 rows are Y channel
         
         # Downsample to 80x60 for extreme speed
         tiny = cv2.resize(gray, (80, 60), interpolation=cv2.INTER_NEAREST)
