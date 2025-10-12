@@ -61,7 +61,7 @@ class EyeTracker:
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
-        self.cache_size = 20  # Cache 20 eye positions
+        self.cache_size = 50  # Cache 50 eye positions (more aggressive)
         self.last_rendered_pos = None
         
         # Frame skipping (optimization #3)
@@ -83,30 +83,22 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with ULTRA-LOW 120×120 grayscale resolution"""
+        """Initialize camera with ULTRA-LOW 120×120 resolution (NO full FOV for speed!)"""
         try:
             self.camera = Picamera2()
             
-            # ULTRA-LOW resolution: 120×120 grayscale with full sensor FOV
-            # Try YUV420 first (grayscale), fallback to RGB
-            try:
-                config = self.camera.create_video_configuration(
-                    main={"size": (self.camera_width, self.camera_height), "format": "YUV420"},
-                    raw={"size": self.camera.sensor_resolution}  # Keep full FOV
-                )
-                self.camera.configure(config)
-                print(f"Camera: {self.camera_width}x{self.camera_height} (Grayscale/YUV) with full FOV!")
-            except:
-                # Fallback to RGB
-                config = self.camera.create_video_configuration(
-                    main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
-                    raw={"size": self.camera.sensor_resolution}
-                )
-                self.camera.configure(config)
-                print(f"Camera: {self.camera_width}x{self.camera_height} (RGB fallback) with full FOV!")
+            # ULTRA-LOW resolution: 120×120 - NO raw sensor (too slow!)
+            # Use lores stream for maximum speed
+            config = self.camera.create_video_configuration(
+                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
+                # NO raw= parameter - it slows down capture by 3-4x!
+            )
+            self.camera.configure(config)
             
             self.camera.start()
+            print(f"Camera: {self.camera_width}x{self.camera_height} (RGB, fast mode)")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
+            print("NOTE: Using cropped FOV for maximum speed!")
             return True
         except Exception as e:
             print(f"Camera init failed: {e}")
@@ -156,56 +148,44 @@ class EyeTracker:
             return False
     
     def create_eye_image(self, eye_x, eye_y):
-        """Create BIGGER eye image with caching - 2x size"""
-        # Round to nearest 10 pixels for cache key
-        cache_x = round(eye_x / 10) * 10
-        cache_y = round(eye_y / 10) * 10
+        """Create BIGGER eye image with AGGRESSIVE caching - 2x size"""
+        # Round to nearest 20 pixels for MORE caching (less unique images)
+        cache_x = round(eye_x / 20) * 20
+        cache_y = round(eye_y / 20) * 20
         cache_key = (cache_x, cache_y)
         
         # Check cache first
         if cache_key in self.eye_cache:
             return self.eye_cache[cache_key]
         
-        # Create new image
-        image = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
-        draw = ImageDraw.Draw(image)
+        # Create new image with NumPy (faster than PIL)
+        img_array = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
         
         # BIGGER Eye parameters (2x size)
-        eye_size = 160  # Was 80
-        iris_size = 120  # Was 60
-        pupil_size = 60  # Was 30
-        highlight_size = 30  # Was 15
+        iris_radius = 60  # Was 60
+        pupil_radius = 30  # Was 30
         
         # Calculate eye position (clamp to display bounds with margin)
-        eye_x = max(eye_size//2, min(WIDTH - eye_size//2, eye_x))
-        eye_y = max(eye_size//2, min(HEIGHT - eye_size//2, eye_y))
+        eye_x = int(max(iris_radius, min(WIDTH - iris_radius, eye_x)))
+        eye_y = int(max(iris_radius, min(HEIGHT - iris_radius, eye_y)))
         
-        # Draw eyelid (simplified - less vertices)
-        eyelid_path = [
-            (eye_x - eye_size//2, eye_y),
-            (eye_x, eye_y - eye_size//3),
-            (eye_x + eye_size//2, eye_y),
-            (eye_x, eye_y + eye_size//3)
-        ]
-        draw.polygon(eyelid_path, fill=(20, 20, 20))
+        # Draw iris (red circle) using NumPy
+        y, x = np.ogrid[:HEIGHT, :WIDTH]
+        mask_iris = (x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2
+        img_array[mask_iris] = [200, 50, 25]  # Red iris
         
-        # Draw iris
-        iris_x = eye_x - iris_size//2
-        iris_y = eye_y - iris_size//2
-        draw.ellipse([iris_x, iris_y, iris_x + iris_size, iris_y + iris_size], 
-                    fill=(200, 50, 25))
+        # Draw pupil (black circle)
+        mask_pupil = (x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2
+        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
         
-        # Draw pupil
-        pupil_x = eye_x - pupil_size//2
-        pupil_y = eye_y - pupil_size//2
-        draw.ellipse([pupil_x, pupil_y, pupil_x + pupil_size, pupil_y + pupil_size], 
-                    fill=(0, 0, 0))
+        # Draw highlight (white circle) - offset
+        highlight_x = eye_x + 15
+        highlight_y = eye_y - 10
+        mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 15**2
+        img_array[mask_highlight] = [255, 255, 255]  # White highlight
         
-        # Draw highlight
-        highlight_x = eye_x - highlight_size//2 + 20  # Was +10
-        highlight_y = eye_y - highlight_size//2 - 10  # Was -5
-        draw.ellipse([highlight_x, highlight_y, highlight_x + highlight_size, highlight_y + highlight_size], 
-                    fill=(255, 255, 255))
+        # Convert to PIL Image
+        image = Image.fromarray(img_array)
         
         # Cache management - keep only recent entries
         if len(self.eye_cache) >= self.cache_size:
@@ -405,9 +385,9 @@ class EyeTracker:
                 
                 # Check if position changed enough to warrant update
                 eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 5) * 5, round(eye_y / 5) * 5)
+                rounded_pos = (round(eye_x / 20) * 20, round(eye_y / 20) * 20)
                 
-                # Only update if moved more than 5 pixels
+                # Only update if moved more than 20 pixels (matches cache granularity)
                 if rounded_pos != self.last_rendered_pos:
                     t0 = time.time()
                     eye_image = self.create_eye_image(int(eye_x), int(eye_y))
@@ -420,8 +400,8 @@ class EyeTracker:
                 time.sleep(1.0/15.0)
                 
             except Exception as e:
-                        print(f"Display thread error: {e}")
-                        time.sleep(0.1)
+                                print(f"Display thread error: {e}")
+                                time.sleep(0.1)
     
     def start(self):
         """Start the eye tracker - uses external run function"""
