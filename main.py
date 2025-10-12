@@ -354,17 +354,17 @@ class EyeTracker:
                     
                     # Display frame
                     cv2.imshow('Motion Detection', display_frame)
-            
-            # Check for 'q' key press to quit
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                    
+                    # Check for 'q' key press to quit
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
                         
                 except queue.Empty:
                     continue
-                
-    except KeyboardInterrupt:
+                    
+        except KeyboardInterrupt:
             print("\nStopping Eye Tracker...")
-    finally:
+        finally:
             self.stop()
     
     def stop(self):
