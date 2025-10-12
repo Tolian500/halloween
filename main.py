@@ -333,12 +333,18 @@ class EyeTracker:
         avg_display = sum(self.timing_display) / len(self.timing_display) if self.timing_display else 0
         avg_total = sum(self.timing_total) / len(self.timing_total)
         
+        # Calculate data transfer efficiency
+        full_screen_bytes = WIDTH * HEIGHT * 2  # RGB565 = 2 bytes per pixel
+        avg_window_size = 100 * 100 * 2  # Approximate dynamic window
+        efficiency = (1 - avg_window_size / full_screen_bytes) * 100
+        
         print("=" * 60)
         print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
         print(f"  Camera Capture:   {avg_capture:.2f}ms")
         print(f"  Motion Detection: {avg_motion:.2f}ms")
-        print(f"  Display Update:   {avg_display:.2f}ms (async thread)")
+        print(f"  Display Update:   {avg_display:.2f}ms (dynamic window)")
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
+        print(f"  Data Efficiency:  {efficiency:.1f}% reduction (vs full screen)")
         
         # Calculate theoretical max FPS
         theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
@@ -461,13 +467,21 @@ class EyeTracker:
                     t0 = time.time()
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
                     
-                    # OPTIMIZATION: Update only center region (120x120) instead of full screen!
-                    # This reduces data transfer by 75%! (14,400 pixels vs 57,600)
-                    window_size = 120
-                    x_start = (WIDTH - window_size) // 2  # 60
-                    x_end = x_start + window_size - 1     # 179
-                    y_start = (HEIGHT - window_size) // 2 # 60
-                    y_end = y_start + window_size - 1     # 179
+                    # DYNAMIC WINDOW: Calculate optimal update region based on eye position
+                    # Eye radius is ~50px, so we need at least 100x100 window
+                    # Add margin for smooth movement
+                    window_size = 100
+                    margin = 10
+                    
+                    # Calculate window bounds centered on eye, clamped to screen
+                    x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
+                    x_end = min(WIDTH - 1, x_start + window_size - 1)
+                    y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
+                    y_end = min(HEIGHT - 1, y_start + window_size - 1)
+                    
+                    # Adjust window size if clamped to edges
+                    actual_width = x_end - x_start + 1
+                    actual_height = y_end - y_start + 1
                     
                     # Set partial window (CASET/RASET commands)
                     self.display._write_command(0x2A)  # Column address set
@@ -476,10 +490,10 @@ class EyeTracker:
                     self.display._write_data([0x00, y_start, 0x00, y_end])
                     self.display._write_command(0x2C)  # Memory write
                     
-                    # Extract only the center 120x120 region from full image
+                    # Extract only the dynamic window region from full image
                     # RGB565 is 2 bytes per pixel, 240 pixels per row
                     row_bytes = WIDTH * 2
-                    window_bytes = window_size * 2
+                    window_bytes = actual_width * 2
                     partial_data = bytearray()
                     
                     for row in range(y_start, y_end + 1):
@@ -503,8 +517,8 @@ class EyeTracker:
                 time.sleep(1.0/20.0)
                 
             except Exception as e:
-                        print(f"Display thread error: {e}")
-                        time.sleep(0.1)
+                print(f"Display thread error: {e}")
+                time.sleep(0.1)
     
     def start(self):
         """Start the eye tracker - uses external run function"""
