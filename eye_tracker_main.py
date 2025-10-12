@@ -46,20 +46,20 @@ def run_eye_tracker(eye_tracker):
             try:
                 frame, motion_boxes = eye_tracker.frame_queue.get(timeout=1.0)
                 
+                # Convert to BGR for OpenCV first (handle grayscale)
+                if len(frame.shape) == 3:
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                else:
+                    # Grayscale - convert to BGR for display
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                
                 # Draw motion rectangles on frame
                 for (x, y, w, h) in motion_boxes:
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
                     # Draw center point
                     center_x = x + w//2
                     center_y = y + h//2
-                    cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-                
-                    # Convert to BGR for OpenCV (handle grayscale)
-                    if len(frame.shape) == 3:
-                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    else:
-                        # Grayscale - convert to BGR for display
-                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                    cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
                 
                 # Resize for display if needed (keep aspect ratio)
                 display_height = 480
