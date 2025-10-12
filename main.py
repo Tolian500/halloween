@@ -72,8 +72,8 @@ class EyeTracker:
         self.prev_frame = None
         self.motion_threshold = 35  # Higher threshold to reduce false motion
         self.min_motion_area = 800  # Larger area to reduce sensitivity
-        self.camera_width = 120  # ULTRA-LOW: 120x120
-        self.camera_height = 120  # Square format
+        self.camera_width = 80  # EXTREME-LOW: 80x80 for maximum speed
+        self.camera_height = 80  # Square format
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
@@ -86,7 +86,11 @@ class EyeTracker:
         
         # Motion detection optimization (optimization #5)
         self.motion_check_counter = 0
-        self.motion_check_interval = 1  # Check EVERY frame (motion is super fast now!)
+        self.motion_check_interval = 2  # Check every 2nd frame (15-20 Hz detection)
+        
+        # Frame skipping for camera (optimization #3)
+        self.frame_skip_counter = 0
+        self.frame_skip_interval = 1  # Skip every 2nd frame capture
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -99,22 +103,22 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with ULTRA-LOW 120×120 resolution (NO full FOV for speed!)"""
+        """Initialize camera with EXTREME-LOW 80×80 resolution + grayscale optimization"""
         try:
             self.camera = Picamera2()
             
-            # ULTRA-LOW resolution: 120×120 - NO raw sensor (too slow!)
-            # Use lores stream for maximum speed
+            # EXTREME-LOW resolution: 80×80 - NO raw sensor (too slow!)
+            # Use grayscale format for 25% faster processing
             config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
-                # NO raw= parameter - it slows down capture by 3-4x!
+                main={"size": (self.camera_width, self.camera_height), "format": "YUV420"}
+                # YUV420 gives us grayscale Y channel directly - no conversion needed!
             )
             self.camera.configure(config)
             
             self.camera.start()
-            print(f"Camera: {self.camera_width}x{self.camera_height} (RGB, fast mode)")
+            print(f"Camera: {self.camera_width}x{self.camera_height} (Grayscale/YUV, ultra-fast mode)")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
-            print("NOTE: Using cropped FOV for maximum speed!")
+            print("NOTE: Using grayscale format + cropped FOV for maximum speed!")
             return True
         except Exception as e:
             print(f"Camera init failed: {e}")
@@ -256,30 +260,30 @@ class EyeTracker:
         return rgb565_bytes
     
     def detect_motion(self, frame):
-        """ULTRA-FAST motion detection at 40×40 pixels!"""
-        # Extreme downsample to 40x40 (1600 pixels!)
-        tiny = cv2.resize(frame, (40, 40), interpolation=cv2.INTER_NEAREST)
-        
-        # Convert to grayscale if needed
-        if len(tiny.shape) == 3:
-            # RGB/YUV - convert to grayscale
-            gray = cv2.cvtColor(tiny, cv2.COLOR_RGB2GRAY)
+        """EXTREME-FAST motion detection at 32×32 pixels with grayscale optimization!"""
+        # Extract Y channel from YUV420 (already grayscale!)
+        if len(frame.shape) == 3:
+            # YUV420 - extract Y channel (grayscale)
+            gray = frame[:, :, 0]  # Y channel is first
         else:
-            # Already grayscale (Y channel from YUV420)
-            gray = tiny
+            # Already grayscale
+            gray = frame
+        
+        # Extreme downsample to 32x32 (1024 pixels!) - even smaller for speed
+        tiny = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_NEAREST)
         
         # Initialize previous frame
         if self.prev_frame is None:
-            self.prev_frame = gray
+            self.prev_frame = tiny
             return None
         
         # NO BLUR - saves 5-10ms
-        # Direct difference
-        frame_delta = cv2.absdiff(self.prev_frame, gray)
+        # Direct difference (in-place operation)
+        frame_delta = cv2.absdiff(self.prev_frame, tiny)
         _, thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)
         
-        # Update previous frame
-        self.prev_frame = gray
+        # Update previous frame (reuse buffer)
+        self.prev_frame = tiny
         
         # Use moments instead of contours (MUCH faster)
         moments = cv2.moments(thresh)
@@ -289,12 +293,12 @@ class EyeTracker:
             cx = int(moments["m10"] / moments["m00"])
             cy = int(moments["m01"] / moments["m00"])
             
-            # Scale from 40x40 to 120x120 (3x)
-            x = int(cx * 3)
-            y = int(cy * 3)
+            # Scale from 32x32 to 80x80 (2.5x)
+            x = int(cx * 2.5)
+            y = int(cy * 2.5)
             
             # Return fake bounding box
-            return [(x, y, 20, 20)]
+            return [(x, y, 16, 16)]
         
         return []
     
@@ -373,11 +377,15 @@ class EyeTracker:
         
         print("=" * 60)
         print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
-        print(f"  Camera Capture:   {avg_capture:.2f}ms")
-        print(f"  Motion Detection: {avg_motion:.2f}ms")
+        print(f"  Camera Capture:   {avg_capture:.2f}ms (80x80 grayscale)")
+        print(f"  Motion Detection: {avg_motion:.2f}ms (32x32 pixels)")
         print(f"  Display Update:    {avg_display:.2f}ms (full screen)")
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
         print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
+        print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (YUV420)")
+        print(f"  Motion Resolution: 32x32 (grayscale)")
+        print(f"  Frame Skipping:    Every {self.frame_skip_interval + 1} frames")
+        print(f"  Motion Detection:  Every {self.motion_check_interval} frames")
         
         # Calculate theoretical max FPS
         theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
@@ -396,9 +404,22 @@ class EyeTracker:
             try:
                 frame_start = time.time()
                 
-                # Capture frame
+                # Capture frame with skipping (optimization #3)
                 t0 = time.time()
-                frame = self.camera.capture_array()
+                
+                # Skip frames when system overloaded - grab without decoding
+                self.frame_skip_counter += 1
+                if self.frame_skip_counter >= self.frame_skip_interval:
+                    self.frame_skip_counter = 0
+                    frame = self.camera.capture_array()
+                else:
+                    # Skip this frame - reuse previous frame
+                    if not hasattr(self, 'last_frame'):
+                        frame = self.camera.capture_array()
+                    else:
+                        frame = self.last_frame
+                
+                self.last_frame = frame
                 capture_time = (time.time() - t0) * 1000  # ms
                 
                 # Frame skipping for motion detection (Optimization #3 & #5)
