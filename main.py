@@ -34,7 +34,7 @@ class EyeTracker:
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
-        self.eye_movement_speed = 0.25  # Faster response
+        self.eye_movement_speed = 0.3  # Even faster response for smooth tracking
         
         # Performance monitoring
         self.frame_count = 0
@@ -148,10 +148,10 @@ class EyeTracker:
             return False
     
     def create_eye_image(self, eye_x, eye_y):
-        """Create BIGGER eye image with AGGRESSIVE caching + RGB565 pre-conversion"""
-        # Round to nearest 20 pixels for MORE caching (less unique images)
-        cache_x = round(eye_x / 20) * 20
-        cache_y = round(eye_y / 20) * 20
+        """Create BIGGER eye image with BALANCED caching + RGB565 pre-conversion"""
+        # Round to nearest 10 pixels for smoother movement (still good caching)
+        cache_x = round(eye_x / 10) * 10
+        cache_y = round(eye_y / 10) * 10
         cache_key = (cache_x, cache_y)
         
         # Check cache first (cache stores RGB565 bytes directly!)
@@ -392,9 +392,9 @@ class EyeTracker:
                 
                 # Check if position changed enough to warrant update
                 eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 20) * 20, round(eye_y / 20) * 20)
+                rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10)
                 
-                # Only update if moved more than 20 pixels (matches cache granularity)
+                # Only update if moved more than 10 pixels (smoother movement!)
                 if rounded_pos != self.last_rendered_pos:
                     t0 = time.time()
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y))
@@ -419,8 +419,8 @@ class EyeTracker:
                     self.timing_display.append(display_time)
                     self.last_rendered_pos = rounded_pos
                 
-                # 15 FPS - SPI transfer is SLOW (60-80ms per frame!)
-                time.sleep(1.0/15.0)
+                # 20 FPS - faster updates for smoother motion
+                time.sleep(1.0/20.0)
                 
             except Exception as e:
                 print(f"Display thread error: {e}")
