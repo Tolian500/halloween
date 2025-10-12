@@ -74,23 +74,43 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize the camera - Optimization #6: Use 640x480 to reduce overhead"""
+        """Initialize camera with full sensor mode for maximum FOV"""
         try:
             self.camera = Picamera2()
-            # Use 640x480 for optimal balance of FOV and performance
-            config = self.camera.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+            
+            # Use sensor's full resolution for maximum FOV, then downscale
+            # This prevents cropping and gives you the full wide angle
+            config = self.camera.create_video_configuration(
+                main={"size": (640, 480), "format": "RGB888"},
+                raw={"size": self.camera.sensor_resolution}  # Use full sensor for FOV
             )
             self.camera.configure(config)
             self.camera_width = 640
             self.camera_height = 480
             
             self.camera.start()
-            print(f"Camera initialized at {self.camera_width}x{self.camera_height} for optimal performance!")
+            print(f"Camera initialized at {self.camera_width}x{self.camera_height} with full FOV!")
+            print(f"Sensor resolution: {self.camera.sensor_resolution}")
             return True
         except Exception as e:
             print(f"Failed to initialize camera: {e}")
-            return False
+            print("Trying alternative configuration...")
+            try:
+                # Fallback: Use lores stream for full FOV
+                config = self.camera.create_video_configuration(
+                    main={"size": (640, 480), "format": "RGB888"},
+                    lores={"size": (640, 480)},
+                    display="lores"
+                )
+                self.camera.configure(config)
+                self.camera_width = 640
+                self.camera_height = 480
+                self.camera.start()
+                print(f"Camera initialized with alternative config at {self.camera_width}x{self.camera_height}")
+                return True
+            except Exception as e2:
+                print(f"Alternative camera init also failed: {e2}")
+                return False
     
     def init_face_detection(self):
         """Initialize face detection"""
