@@ -12,6 +12,8 @@ import RPi.GPIO as GPIO
 import spidev
 from PIL import Image, ImageDraw
 import threading
+import cv2
+import queue
 
 # Import the GC9A01 display class
 from test_gc9a01 import GC9A01
@@ -39,12 +41,18 @@ class MiniEyeTracker:
         self.camera_width = 160
         self.camera_height = 120
         
-        # Brightness threshold for motion detection
-        self.brightness_threshold = 50
+        # Brightness threshold for motion detection (lowered for better detection)
+        self.brightness_threshold = 30
         
         # Pre-rendered eye cache
         self.eye_cache = {}
         self.last_rendered_pos = None
+        
+        # Frame queue for preview
+        self.frame_queue = queue.Queue(maxsize=1)
+        
+        # Debug info
+        self.last_centroid = None
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -147,6 +155,8 @@ class MiniEyeTracker:
     
     def update_eye_position(self, centroid):
         """Update eye position from brightness centroid"""
+        self.last_centroid = centroid  # Store for debug
+        
         if centroid:
             x, y = centroid
             
@@ -159,9 +169,7 @@ class MiniEyeTracker:
             eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 40)
             
             self.target_eye_position = (eye_x, eye_y)
-        else:
-            # Return to center
-            self.target_eye_position = (WIDTH//2, HEIGHT//2)
+        # Don't return to center - keep last position
     
     def smooth_eye_movement(self):
         """Smooth interpolation"""
@@ -185,8 +193,6 @@ class MiniEyeTracker:
     
     def camera_thread(self):
         """Camera processing thread - optimized for speed"""
-        skip_counter = 0
-        
         while self.running:
             try:
                 # Capture frame
@@ -196,6 +202,16 @@ class MiniEyeTracker:
                 centroid = self.detect_brightness_centroid(frame)
                 self.update_eye_position(centroid)
                 
+                # Add to queue for preview
+                try:
+                    self.frame_queue.put_nowait((frame, centroid))
+                except queue.Full:
+                    try:
+                        self.frame_queue.get_nowait()
+                        self.frame_queue.put_nowait((frame, centroid))
+                    except:
+                        pass
+                
                 # Update FPS
                 self.update_fps()
                 
@@ -204,34 +220,59 @@ class MiniEyeTracker:
                 time.sleep(0.1)
     
     def display_thread(self):
-        """Display thread - only update when position changes"""
-        update_counter = 0
-        
+        """Display thread - update display continuously"""
         while self.running:
             try:
                 # Smooth movement
                 self.smooth_eye_movement()
                 
-                # Only update display every 2 frames
-                update_counter += 1
-                if update_counter >= 2:
-                    update_counter = 0
-                    
-                    # Check if position changed
-                    eye_x, eye_y = self.current_eye_position
-                    rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10)
-                    
-                    if rounded_pos != self.last_rendered_pos:
-                        eye_image = self.create_eye_image(int(eye_x), int(eye_y))
-                        self.display.image(eye_image)
-                        self.last_rendered_pos = rounded_pos
+                # Always update display to see changes immediately
+                eye_x, eye_y = self.current_eye_position
+                eye_image = self.create_eye_image(int(eye_x), int(eye_y))
+                self.display.image(eye_image)
                 
-                # 30 FPS target
-                time.sleep(1.0/30.0)
+                # 25 FPS target (display limit)
+                time.sleep(1.0/25.0)
                 
             except Exception as e:
                 print(f"Display error: {e}")
                 time.sleep(0.1)
+    
+    def preview_thread(self):
+        """Preview window thread"""
+        while self.running:
+            try:
+                frame, centroid = self.frame_queue.get(timeout=1.0)
+                
+                # Convert to BGR and upscale for viewing
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                frame_large = cv2.resize(frame_bgr, (640, 480))
+                
+                # Draw centroid if detected
+                if centroid:
+                    x, y = centroid
+                    # Scale centroid to large frame
+                    x_large = int(x * 4)
+                    y_large = int(y * 4)
+                    cv2.circle(frame_large, (x_large, y_large), 10, (0, 255, 0), -1)
+                    cv2.putText(frame_large, f"Centroid: ({x}, {y})", 
+                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Show threshold info
+                cv2.putText(frame_large, f"Threshold: {self.brightness_threshold}", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                
+                cv2.imshow('Brightness Tracking', frame_large)
+                
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    self.running = False
+                    break
+                    
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Preview error: {e}")
+                break
     
     def start(self):
         """Start the mini tracker"""
@@ -247,12 +288,16 @@ class MiniEyeTracker:
         # Start threads
         cam_thread = threading.Thread(target=self.camera_thread, daemon=True)
         disp_thread = threading.Thread(target=self.display_thread, daemon=True)
+        prev_thread = threading.Thread(target=self.preview_thread, daemon=True)
         
         cam_thread.start()
         disp_thread.start()
+        prev_thread.start()
         
-        print("Mini Eye Tracker running! Press Ctrl+C to stop.")
-        print("Move in front of camera - it tracks the brightest area")
+        print("Mini Eye Tracker running!")
+        print("- Green dot shows brightness centroid")
+        print("- Adjust lighting if no tracking detected")
+        print("- Press 'q' to quit")
         
         try:
             while self.running:
@@ -269,6 +314,7 @@ class MiniEyeTracker:
             self.display.close()
         if self.camera:
             self.camera.close()
+        cv2.destroyAllWindows()
         print("Stopped")
 
 def main():
