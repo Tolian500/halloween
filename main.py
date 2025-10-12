@@ -34,9 +34,13 @@ class EyeTracker:
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
-        self.eye_movement_speed = 0.3  # Even faster response for smooth tracking
+        self.eye_movement_speed = 0.15  # Slower, smoother movement to reduce shaking
         self.last_motion_time = time.time()
         self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
+        
+        # Motion smoothing to reduce shaking
+        self.motion_history = []
+        self.motion_history_size = 3  # Average last 3 positions
         
         # Blinking (more natural timing)
         self.is_blinking = False
@@ -68,8 +72,8 @@ class EyeTracker:
         
         # Motion detection variables
         self.prev_frame = None
-        self.motion_threshold = 25
-        self.min_motion_area = 500
+        self.motion_threshold = 35  # Higher threshold to reduce false motion
+        self.min_motion_area = 800  # Larger area to reduce sensitivity
         self.camera_width = 120  # ULTRA-LOW: 120x120
         self.camera_height = 120  # Square format
         
@@ -80,11 +84,11 @@ class EyeTracker:
         
         # Smart clearing optimization
         self.last_clear_time = 0
-        self.clear_interval = 0.1  # Clear every 100ms to prevent ghosting
+        self.clear_interval = 0.05  # Clear every 50ms to prevent ghosting
         self.needs_clear = True
         self.last_clear_pos = None
         self.full_clear_counter = 0
-        self.full_clear_interval = 20  # Full clear every 20 updates
+        self.full_clear_interval = 10  # Full clear every 10 updates
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -290,7 +294,7 @@ class EyeTracker:
         # Use moments instead of contours (MUCH faster)
         moments = cv2.moments(thresh)
         
-        if moments["m00"] > 15:  # Minimum area threshold (adjusted for 40x40)
+        if moments["m00"] > 25:  # Higher threshold to reduce false motion
             # Calculate centroid
             cx = int(moments["m10"] / moments["m00"])
             cy = int(moments["m01"] / moments["m00"])
@@ -305,7 +309,7 @@ class EyeTracker:
         return []
     
     def update_eye_position(self, motion_boxes):
-        """Update eye position with BIGGER movement range + return to center"""
+        """Update eye position with BIGGER movement range + return to center + smoothing"""
         if motion_boxes and len(motion_boxes) > 0:
             # Motion detected!
             self.last_motion_time = time.time()
@@ -323,12 +327,25 @@ class EyeTracker:
             eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 10)  # Inverted X, less margin
             eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 10)  # Less margin
             
-            self.target_eye_position = (eye_x, eye_y)
+            # Add to motion history for smoothing
+            self.motion_history.append((eye_x, eye_y))
+            if len(self.motion_history) > self.motion_history_size:
+                self.motion_history.pop(0)
+            
+            # Calculate smoothed position
+            if len(self.motion_history) >= 2:
+                # Average the last few positions to reduce shaking
+                avg_x = sum(pos[0] for pos in self.motion_history) / len(self.motion_history)
+                avg_y = sum(pos[1] for pos in self.motion_history) / len(self.motion_history)
+                self.target_eye_position = (avg_x, avg_y)
+            else:
+                self.target_eye_position = (eye_x, eye_y)
         else:
             # No motion detected - check timeout
             if time.time() - self.last_motion_time > self.motion_timeout:
                 # Return to center after timeout
                 self.target_eye_position = (WIDTH//2, HEIGHT//2)
+                self.motion_history.clear()  # Clear history when returning to center
     
     def smooth_eye_movement(self):
         """Smoothly interpolate eye movement"""
@@ -506,11 +523,11 @@ class EyeTracker:
                     t0 = time.time()
                     current_time = time.time()
                     
-                    # OPTIMIZATION 1: Smart clearing - clear when needed or position changed significantly
+                    # OPTIMIZATION 1: Smart clearing - clear more frequently to prevent ghosting
                     should_clear = ((current_time - self.last_clear_time) >= self.clear_interval or 
                                   self.last_clear_pos is None or
-                                  abs(eye_x - self.last_clear_pos[0]) > 30 or 
-                                  abs(eye_y - self.last_clear_pos[1]) > 30)
+                                  abs(eye_x - self.last_clear_pos[0]) > 20 or 
+                                  abs(eye_y - self.last_clear_pos[1]) > 20)
                     
                     # Full clear every N updates to prevent persistent ghosting
                     self.full_clear_counter += 1
