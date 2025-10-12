@@ -49,8 +49,8 @@ class EyeTracker:
         self.prev_frame = None
         self.motion_threshold = 25
         self.min_motion_area = 500
-        self.camera_width = 160  # REDUCED from 640
-        self.camera_height = 120  # REDUCED from 480
+        self.camera_width = 120  # ULTRA-LOW: 120x120
+        self.camera_height = 120  # Square format
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
@@ -76,19 +76,29 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with ULTRA-LOW resolution for maximum speed"""
+        """Initialize camera with ULTRA-LOW 120×120 grayscale resolution"""
         try:
             self.camera = Picamera2()
             
-            # ULTRA-LOW resolution: 160×120 with full sensor FOV
-            config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
-                raw={"size": self.camera.sensor_resolution}  # Keep full FOV
-            )
-            self.camera.configure(config)
+            # ULTRA-LOW resolution: 120×120 grayscale with full sensor FOV
+            # Try YUV420 first (grayscale), fallback to RGB
+            try:
+                config = self.camera.create_video_configuration(
+                    main={"size": (self.camera_width, self.camera_height), "format": "YUV420"},
+                    raw={"size": self.camera.sensor_resolution}  # Keep full FOV
+                )
+                self.camera.configure(config)
+                print(f"Camera: {self.camera_width}x{self.camera_height} (Grayscale/YUV) with full FOV!")
+            except:
+                # Fallback to RGB
+                config = self.camera.create_video_configuration(
+                    main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
+                    raw={"size": self.camera.sensor_resolution}
+                )
+                self.camera.configure(config)
+                print(f"Camera: {self.camera_width}x{self.camera_height} (RGB fallback) with full FOV!")
             
             self.camera.start()
-            print(f"Camera: {self.camera_width}x{self.camera_height} (ULTRA-LOW RES) with full FOV!")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
             return True
         except Exception as e:
@@ -199,12 +209,17 @@ class EyeTracker:
         return image
     
     def detect_motion(self, frame):
-        """ULTRA-FAST motion detection at 50×40 pixels!"""
-        # Extreme downsample to 50x40 (3200 pixels - 256x faster than 640×480!)
-        tiny = cv2.resize(frame, (50, 40), interpolation=cv2.INTER_NEAREST)
+        """ULTRA-FAST motion detection at 40×40 pixels!"""
+        # Extreme downsample to 40x40 (1600 pixels!)
+        tiny = cv2.resize(frame, (40, 40), interpolation=cv2.INTER_NEAREST)
         
-        # Convert to grayscale
-        gray = cv2.cvtColor(tiny, cv2.COLOR_RGB2GRAY)
+        # Convert to grayscale if needed
+        if len(tiny.shape) == 3:
+            # RGB/YUV - convert to grayscale
+            gray = cv2.cvtColor(tiny, cv2.COLOR_RGB2GRAY)
+        else:
+            # Already grayscale (Y channel from YUV420)
+            gray = tiny
         
         # Initialize previous frame
         if self.prev_frame is None:
@@ -222,13 +237,13 @@ class EyeTracker:
         # Use moments instead of contours (MUCH faster)
         moments = cv2.moments(thresh)
         
-        if moments["m00"] > 20:  # Minimum area threshold
+        if moments["m00"] > 15:  # Minimum area threshold (adjusted for 40x40)
             # Calculate centroid
             cx = int(moments["m10"] / moments["m00"])
             cy = int(moments["m01"] / moments["m00"])
             
-            # Scale from 50x40 to 160x120 (approx 3x)
-            x = int(cx * 3.2)
+            # Scale from 40x40 to 120x120 (3x)
+            x = int(cx * 3)
             y = int(cy * 3)
             
             # Return fake bounding box
