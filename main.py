@@ -32,7 +32,7 @@ class EyeTracker:
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
-        self.eye_movement_speed = 0.1
+        self.eye_movement_speed = 0.15
         
         # Performance monitoring
         self.frame_count = 0
@@ -42,6 +42,13 @@ class EyeTracker:
         # Threading
         self.frame_queue = queue.Queue(maxsize=2)
         self.display_thread = None
+        
+        # Motion detection variables
+        self.prev_frame = None
+        self.motion_threshold = 25
+        self.min_motion_area = 500
+        self.camera_width = 320
+        self.camera_height = 240
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -57,8 +64,10 @@ class EyeTracker:
         """Initialize the camera"""
         try:
             self.camera = Picamera2()
+            # Use lower resolution for better performance
             config = self.camera.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+                main={"size": (320, 240), "format": "RGB888"},
+                controls={"FrameRate": 30}
             )
             self.camera.configure(config)
             self.camera.start()
@@ -167,33 +176,58 @@ class EyeTracker:
         
         return image
     
-    def detect_faces(self, frame):
-        """Detect faces in frame"""
+    def detect_motion(self, frame):
+        """Detect motion using frame differencing - much faster than face detection"""
+        # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        faces = self.face_cascade.detectMultiScale(
-            gray, 
-            scaleFactor=1.1, 
-            minNeighbors=5, 
-            minSize=(30, 30)
-        )
-        return faces
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        
+        # Initialize previous frame
+        if self.prev_frame is None:
+            self.prev_frame = gray
+            return None
+        
+        # Compute difference between current and previous frame
+        frame_delta = cv2.absdiff(self.prev_frame, gray)
+        thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)[1]
+        
+        # Dilate to fill in holes
+        thresh = cv2.dilate(thresh, None, iterations=2)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Update previous frame
+        self.prev_frame = gray
+        
+        # Find the largest contour (most likely the person)
+        largest_contour = None
+        max_area = 0
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > self.min_motion_area and area > max_area:
+                max_area = area
+                largest_contour = contour
+        
+        if largest_contour is not None:
+            # Get bounding box
+            x, y, w, h = cv2.boundingRect(largest_contour)
+            return [(x, y, w, h)]
+        
+        return []
     
-    def update_eye_position(self, faces):
-        """Update eye position based on face detection"""
-        if len(faces) > 0:
-            # Use the first detected face
-            x, y, w, h = faces[0]
-            face_center_x = x + w//2
-            face_center_y = y + h//2
+    def update_eye_position(self, motion_boxes):
+        """Update eye position based on motion detection"""
+        if motion_boxes and len(motion_boxes) > 0:
+            # Use the first detected motion
+            x, y, w, h = motion_boxes[0]
+            motion_center_x = x + w//2
+            motion_center_y = y + h//2
             
-            # Convert face position to eye position
-            # Map camera coordinates to display coordinates
-            camera_width = 640
-            camera_height = 480
-            
-            # Normalize face position (-1 to 1)
-            norm_x = (face_center_x - camera_width//2) / (camera_width//2)
-            norm_y = (face_center_y - camera_height//2) / (camera_height//2)
+            # Normalize motion position (-1 to 1)
+            norm_x = (motion_center_x - self.camera_width//2) / (self.camera_width//2)
+            norm_y = (motion_center_y - self.camera_height//2) / (self.camera_height//2)
             
             # Map to display coordinates
             eye_x = WIDTH//2 + norm_x * (WIDTH//2 - 40)  # 40px margin
@@ -201,7 +235,7 @@ class EyeTracker:
             
             self.target_eye_position = (eye_x, eye_y)
         else:
-            # No faces detected, return to center
+            # No motion detected, return to center
             self.target_eye_position = (WIDTH//2, HEIGHT//2)
     
     def smooth_eye_movement(self):
@@ -232,23 +266,23 @@ class EyeTracker:
                 # Capture frame
                 frame = self.camera.capture_array()
                 
-                # Detect faces
-                faces = self.detect_faces(frame)
+                # Detect motion (much faster than face detection)
+                motion_boxes = self.detect_motion(frame)
                 
                 # Update eye position
-                self.update_eye_position(faces)
+                if motion_boxes is not None:
+                    self.update_eye_position(motion_boxes)
                 
                 # Update FPS
                 self.update_fps()
                 
                 # Add frame to queue (non-blocking)
                 try:
-                    self.frame_queue.put_nowait((frame, faces))
+                    self.frame_queue.put_nowait((frame, motion_boxes if motion_boxes else []))
                 except queue.Full:
                     pass  # Skip frame if queue is full
                 
-                # Small delay to prevent overwhelming
-                time.sleep(0.033)  # ~30 FPS
+                # No delay needed - run as fast as possible
                 
             except Exception as e:
                 print(f"Camera thread error: {e}")
@@ -302,28 +336,35 @@ class EyeTracker:
             # Main loop for OpenCV display (optional)
             while self.running:
                 try:
-                    frame, faces = self.frame_queue.get(timeout=1.0)
+                    frame, motion_boxes = self.frame_queue.get(timeout=1.0)
                     
-                    # Draw face rectangles on frame
-                    for (x, y, w, h) in faces:
+                    # Draw motion rectangles on frame
+                    for (x, y, w, h) in motion_boxes:
                         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                        # Draw center point
+                        center_x = x + w//2
+                        center_y = y + h//2
+                        cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
                     
                     # Convert RGB to BGR for OpenCV
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     
-                    # Display frame
-                    cv2.imshow('Face Detection', frame_bgr)
+                    # Resize for better viewing (make it wider)
+                    display_frame = cv2.resize(frame_bgr, (640, 480), interpolation=cv2.INTER_LINEAR)
                     
-                    # Check for 'q' key press to quit
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
+                    # Display frame
+                    cv2.imshow('Motion Detection', display_frame)
+            
+            # Check for 'q' key press to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
                         
                 except queue.Empty:
                     continue
-                    
-        except KeyboardInterrupt:
+                
+    except KeyboardInterrupt:
             print("\nStopping Eye Tracker...")
-        finally:
+    finally:
             self.stop()
     
     def stop(self):
