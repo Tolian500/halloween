@@ -54,12 +54,13 @@ def run_eye_tracker(eye_tracker):
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 
                 # Draw motion rectangles on frame
-                for (x, y, w, h) in motion_boxes:
-                    cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    # Draw center point
-                    center_x = x + w//2
-                    center_y = y + h//2
-                    cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
+                if motion_boxes:  # Check if not None and not empty
+                    for (x, y, w, h) in motion_boxes:
+                        cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                        # Draw center point
+                        center_x = x + w//2
+                        center_y = y + h//2
+                        cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
                 
                 # Show at native resolution (120×120) - NO RESIZE for speed!
                 # OpenCV will display small but processing is instant

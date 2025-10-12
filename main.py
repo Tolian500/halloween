@@ -349,8 +349,12 @@ class EyeTracker:
                     motion_boxes = self.detect_motion(frame)
                     motion_time = (time.time() - t1) * 1000  # ms
                     
+                    # Handle None return (first frame)
+                    if motion_boxes is None:
+                        motion_boxes = []
+                    
                     # Update eye position only when motion detected
-                    if motion_boxes is not None:
+                    if motion_boxes:
                         self.update_eye_position(motion_boxes)
                     
                     # Store timing
@@ -391,6 +395,11 @@ class EyeTracker:
         """Display thread - LIMITED to 15 FPS to not block camera"""
         while self.running:
             try:
+                # Check if display is initialized
+                if not self.display:
+                    time.sleep(0.1)
+                    continue
+                
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
@@ -410,7 +419,7 @@ class EyeTracker:
                 # 15 FPS - SPI transfer is SLOW (60-80ms per frame!)
                 time.sleep(1.0/15.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     
