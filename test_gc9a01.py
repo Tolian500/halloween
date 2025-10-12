@@ -160,10 +160,16 @@ class GC9A01:
             pixels.append(rgb565 >> 8)  # High byte
             pixels.append(rgb565 & 0xFF)  # Low byte
         
-        # Send all data at once for instant update
+        # Send data in optimized chunks for instant update
         GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
         GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
-        self.spi.writebytes(pixels)
+        
+        # Use larger chunks for better performance while staying under limit
+        chunk_size = 4000  # Stay under 4096 byte limit
+        for i in range(0, len(pixels), chunk_size):
+            chunk = pixels[i:i + chunk_size]
+            self.spi.writebytes(chunk)
+        
         GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
     
     def close(self):
