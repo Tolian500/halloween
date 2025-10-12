@@ -535,6 +535,7 @@ class EyeTracker:
             except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
+                
 
     def start(self):
         """Start the eye tracker - uses external run function"""
