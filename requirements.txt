@@ -2,3 +2,9 @@
 picamera2>=0.3.12
 opencv-python>=4.5.0
 numpy>=1.21.0
+
+
+# Requirements for GC9A01 display test
+adafruit-circuitpython-rgb-display==1.15.0
+adafruit-circuitpython-gc9a01==1.4.0
+Pillow>=9.0.0
