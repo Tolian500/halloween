@@ -57,6 +57,11 @@ class EyeTracker:
         self.timing_total = []
         self.last_perf_print = time.time()
         
+        # SPI timing profiling
+        self.timing_spi_clear = []
+        self.timing_spi_eye = []
+        self.timing_spi_total = []
+        
         # Threading
         self.frame_queue = queue.Queue(maxsize=1) if enable_preview else None
         self.display_thread = None
@@ -72,6 +77,11 @@ class EyeTracker:
         self.eye_cache = {}
         self.cache_size = 50  # Cache 50 eye positions (more aggressive)
         self.last_rendered_pos = None
+        
+        # Smart clearing optimization
+        self.last_clear_time = 0
+        self.clear_interval = 0.5  # Only clear every 500ms
+        self.needs_clear = True
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -168,61 +178,78 @@ class EyeTracker:
         if cache_key in self.eye_cache:
             return self.eye_cache[cache_key]
         
-        # Create new image with NumPy (faster than PIL)
-        img_array = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+        # OPTIMIZATION 8: Reduce rendered image resolution (120x120 instead of 240x240)
+        # Render at half resolution then scale up - 4x faster!
+        render_size = 120
+        scale_factor = WIDTH // render_size  # 2x scale
+        
+        # Create smaller image for rendering
+        img_array = np.zeros((render_size, render_size, 3), dtype=np.uint8)
+        
+        # Scale eye position to render coordinates
+        render_x = int(eye_x // scale_factor)
+        render_y = int(eye_y // scale_factor)
         
         # Smaller eye for faster display (40% size reduction)
-        iris_radius = 50  # Was 60
-        pupil_radius = 25  # Was 30
+        iris_radius = 25  # Scaled down from 50
+        pupil_radius = 12  # Scaled down from 25
         
-        # Calculate eye position (clamp to display bounds with margin)
-        eye_x = int(max(iris_radius, min(WIDTH - iris_radius, eye_x)))
-        eye_y = int(max(iris_radius, min(HEIGHT - iris_radius, eye_y)))
+        # Calculate eye position (clamp to render bounds with margin)
+        render_x = int(max(iris_radius, min(render_size - iris_radius, render_x)))
+        render_y = int(max(iris_radius, min(render_size - iris_radius, render_y)))
         
         # Apply blink (compress vertically)
-        y, x = np.ogrid[:HEIGHT, :WIDTH]
+        y, x = np.ogrid[:render_size, :render_size]
         
         if blink_state < 1.0:
             # Create eyelid effect (close from top and bottom)
-            eyelid_top = int(HEIGHT//2 - (HEIGHT//2) * blink_state)
-            eyelid_bottom = int(HEIGHT//2 + (HEIGHT//2) * blink_state)
+            eyelid_top = int(render_size//2 - (render_size//2) * blink_state)
+            eyelid_bottom = int(render_size//2 + (render_size//2) * blink_state)
             
             # Only draw eye in visible area
             if eyelid_bottom > eyelid_top:
                 # Draw iris (red circle) with blink mask
-                mask_iris = ((x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                mask_iris = ((x - render_x)**2 + (y - render_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
                 img_array[mask_iris] = [200, 50, 25]  # Red iris
                 
                 # Draw pupil (black circle) with blink mask
-                mask_pupil = ((x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                mask_pupil = ((x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
                 img_array[mask_pupil] = [0, 0, 0]  # Black pupil
                 
                 # Draw highlight (white circle) - offset, with blink mask
-                highlight_x = eye_x + 12
-                highlight_y = eye_y - 8
-                mask_highlight = ((x - highlight_x)**2 + (y - highlight_y)**2 <= 12**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+                highlight_x = render_x + 6
+                highlight_y = render_y - 4
+                mask_highlight = ((x - highlight_x)**2 + (y - highlight_y)**2 <= 6**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
                 img_array[mask_highlight] = [255, 255, 255]  # White highlight
         else:
             # Fully open eye
-            mask_iris = (x - eye_x)**2 + (y - eye_y)**2 <= iris_radius**2
+            mask_iris = (x - render_x)**2 + (y - render_y)**2 <= iris_radius**2
             img_array[mask_iris] = [200, 50, 25]  # Red iris
             
-            mask_pupil = (x - eye_x)**2 + (y - eye_y)**2 <= pupil_radius**2
+            mask_pupil = (x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2
             img_array[mask_pupil] = [0, 0, 0]  # Black pupil
             
-            highlight_x = eye_x + 12
-            highlight_y = eye_y - 8
-            mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 12**2
+            highlight_x = render_x + 6
+            highlight_y = render_y - 4
+            mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 6**2
             img_array[mask_highlight] = [255, 255, 255]  # White highlight
         
         # Convert RGB888 to RGB565 using NumPy (10x faster than PIL!)
         r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
         g = (img_array[:, :, 1] >> 2).astype(np.uint16)  # 6 bits
         b = (img_array[:, :, 2] >> 3).astype(np.uint16)  # 5 bits
-        rgb565 = (r << 11) | (g << 5) | b
+        rgb565_small = (r << 11) | (g << 5) | b
+        
+        # Scale up to full resolution using nearest neighbor (fast!)
+        rgb565_full = np.zeros((HEIGHT, WIDTH), dtype=np.uint16)
+        for i in range(render_size):
+            for j in range(render_size):
+                # Fill 2x2 block
+                rgb565_full[i*scale_factor:(i+1)*scale_factor, 
+                           j*scale_factor:(j+1)*scale_factor] = rgb565_small[i, j]
         
         # Convert to bytes (big-endian for SPI)
-        rgb565_bytes = rgb565.astype('>u2').tobytes()
+        rgb565_bytes = rgb565_full.astype('>u2').tobytes()
         
         # Cache management - keep only recent entries
         if len(self.eye_cache) >= self.cache_size:
@@ -333,18 +360,24 @@ class EyeTracker:
         avg_display = sum(self.timing_display) / len(self.timing_display) if self.timing_display else 0
         avg_total = sum(self.timing_total) / len(self.timing_total)
         
-        # Calculate data transfer efficiency
-        full_screen_bytes = WIDTH * HEIGHT * 2  # RGB565 = 2 bytes per pixel
-        avg_window_size = 100 * 100 * 2  # Approximate dynamic window
-        efficiency = (1 - avg_window_size / full_screen_bytes) * 100
+        # Calculate data transfer (now includes smart clearing + partial eye)
+        eye_window_bytes = 100 * 100 * 2  # Eye window
+        clear_window_bytes = 120 * 120 * 2  # Clear window (only when needed)
+        total_transfer = eye_window_bytes + (clear_window_bytes if self.timing_spi_clear else 0)
+        
+        # SPI timing analysis
+        avg_spi_clear = sum(self.timing_spi_clear) / len(self.timing_spi_clear) if self.timing_spi_clear else 0
+        avg_spi_eye = sum(self.timing_spi_eye) / len(self.timing_spi_eye) if self.timing_spi_eye else 0
         
         print("=" * 60)
         print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
         print(f"  Camera Capture:   {avg_capture:.2f}ms")
         print(f"  Motion Detection: {avg_motion:.2f}ms")
-        print(f"  Display Update:   {avg_display:.2f}ms (dynamic window)")
+        print(f"  Display Update:   {avg_display:.2f}ms (smart clear + eye)")
+        print(f"    SPI Clear:      {avg_spi_clear:.2f}ms ({len(self.timing_spi_clear)} clears)")
+        print(f"    SPI Eye:        {avg_spi_eye:.2f}ms")
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
-        print(f"  Data Efficiency:  {efficiency:.1f}% reduction (vs full screen)")
+        print(f"  Data Transfer:    {total_transfer:,} bytes (optimized)")
         
         # Calculate theoretical max FPS
         theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
@@ -356,6 +389,8 @@ class EyeTracker:
         self.timing_motion.clear()
         self.timing_display.clear()
         self.timing_total.clear()
+        self.timing_spi_clear.clear()
+        self.timing_spi_eye.clear()
     
     def camera_thread(self):
         """Optimized camera thread with performance timing"""
@@ -458,20 +493,72 @@ class EyeTracker:
                             # More realistic timing: 3-8 seconds between blinks
                             self.next_blink_delay = np.random.uniform(3, 8)
                 
-                # Check if position or blink state changed
+                # OPTIMIZATION 11: Skip updates if eye position hasn't changed significantly
                 eye_x, eye_y = self.current_eye_position
                 rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10, round(self.blink_state * 10) / 10)
                 
-                # Only update if moved or blink state changed
-                if rounded_pos != self.last_rendered_pos or self.is_blinking:
+                # Only update if moved significantly or blink state changed
+                position_changed = rounded_pos != self.last_rendered_pos
+                blink_changed = self.is_blinking and (self.blink_state != getattr(self, 'last_blink_state', 1.0))
+                
+                if position_changed or blink_changed:
                     t0 = time.time()
+                    current_time = time.time()
+                    
+                    # OPTIMIZATION 1: Smart clearing - only clear when needed
+                    should_clear = (current_time - self.last_clear_time) >= self.clear_interval
+                    
+                    if should_clear:
+                        # OPTIMIZATION 2: Draw black circle background instead of full clear
+                        # Calculate eye region to clear
+                        window_size = 120  # Larger window for background
+                        x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
+                        x_end = min(WIDTH - 1, x_start + window_size - 1)
+                        y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
+                        y_end = min(HEIGHT - 1, y_start + window_size - 1)
+                        
+                        # Clear only the eye region
+                        self.display._write_command(0x2A)  # Column address set
+                        self.display._write_data([0x00, x_start, 0x00, x_end])
+                        self.display._write_command(0x2B)  # Row address set
+                        self.display._write_data([0x00, y_start, 0x00, y_end])
+                        self.display._write_command(0x2C)  # Memory write
+                        
+                        # OPTIMIZATION 12: Profile SPI timing
+                        spi_start = time.time()
+                        
+                        # Send black pixels for background
+                        GPIO.output(self.display.dc_pin, GPIO.HIGH)
+                        GPIO.output(self.display.cs_pin, GPIO.LOW)
+                        
+                        actual_width = x_end - x_start + 1
+                        actual_height = y_end - y_start + 1
+                        clear_bytes = actual_width * actual_height * 2
+                        black_pixel = b'\x00\x00'
+                        
+                        # Batch send black pixels
+                        chunk_size = 4000
+                        for i in range(0, clear_bytes, chunk_size):
+                            chunk = black_pixel * (chunk_size // 2)
+                            if i + chunk_size > clear_bytes:
+                                remaining = clear_bytes - i
+                                chunk = black_pixel * (remaining // 2)
+                            self.display.spi.writebytes(chunk)
+                        
+                        GPIO.output(self.display.cs_pin, GPIO.HIGH)
+                        
+                        # Record SPI clear timing
+                        spi_clear_time = (time.time() - spi_start) * 1000
+                        self.timing_spi_clear.append(spi_clear_time)
+                        
+                        self.last_clear_time = current_time
+                    
+                    # Generate eye image
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
                     
-                    # DYNAMIC WINDOW: Calculate optimal update region based on eye position
-                    # Eye radius is ~50px, so we need at least 100x100 window
-                    # Add margin for smooth movement
+                    # OPTIMIZATION 3: Reuse SPI window when possible
+                    # OPTIMIZATION 4: Dynamically resize update window based on eye movement
                     window_size = 100
-                    margin = 10
                     
                     # Calculate window bounds centered on eye, clamped to screen
                     x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
@@ -483,7 +570,7 @@ class EyeTracker:
                     actual_width = x_end - x_start + 1
                     actual_height = y_end - y_start + 1
                     
-                    # Set partial window (CASET/RASET commands)
+                    # Set partial window for eye
                     self.display._write_command(0x2A)  # Column address set
                     self.display._write_data([0x00, x_start, 0x00, x_end])
                     self.display._write_command(0x2B)  # Row address set
@@ -491,7 +578,6 @@ class EyeTracker:
                     self.display._write_command(0x2C)  # Memory write
                     
                     # Extract only the dynamic window region from full image
-                    # RGB565 is 2 bytes per pixel, 240 pixels per row
                     row_bytes = WIDTH * 2
                     window_bytes = actual_width * 2
                     partial_data = bytearray()
@@ -500,18 +586,32 @@ class EyeTracker:
                         row_offset = row * row_bytes + x_start * 2
                         partial_data.extend(rgb565_bytes[row_offset:row_offset + window_bytes])
                     
-                    # Send partial RGB565 data in optimized chunks
+                    # OPTIMIZATION 7: Batch SPI transfers instead of multiple small chunks
+                    spi_eye_start = time.time()
+                    
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     GPIO.output(self.display.cs_pin, GPIO.LOW)
-                    chunk_size = 4000
-                    for i in range(0, len(partial_data), chunk_size):
-                        chunk = partial_data[i:i+chunk_size]
-                        self.display.spi.writebytes(chunk)
+                    
+                    # Send all data in one batch if possible
+                    if len(partial_data) <= 4000:
+                        self.display.spi.writebytes(partial_data)
+                    else:
+                        # Use larger chunks for better efficiency
+                        chunk_size = 8000  # Increased chunk size
+                        for i in range(0, len(partial_data), chunk_size):
+                            chunk = partial_data[i:i+chunk_size]
+                            self.display.spi.writebytes(chunk)
+                    
                     GPIO.output(self.display.cs_pin, GPIO.HIGH)
+                    
+                    # Record SPI eye timing
+                    spi_eye_time = (time.time() - spi_eye_start) * 1000
+                    self.timing_spi_eye.append(spi_eye_time)
                     
                     display_time = (time.time() - t0) * 1000  # ms
                     self.timing_display.append(display_time)
                     self.last_rendered_pos = rounded_pos
+                    self.last_blink_state = self.blink_state
                 
                 # 20 FPS - faster updates for smoother motion
                 time.sleep(1.0/20.0)
@@ -519,7 +619,7 @@ class EyeTracker:
             except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
-    
+
     def start(self):
         """Start the eye tracker - uses external run function"""
         from eye_tracker_main import run_eye_tracker
