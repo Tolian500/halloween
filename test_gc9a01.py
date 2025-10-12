@@ -42,7 +42,7 @@ class GC9A01:
         # Setup SPI
         self.spi = spidev.SpiDev()
         self.spi.open(spi_bus, spi_device)
-        self.spi.max_speed_hz = 80000000  # 80MHz for maximum speed (GC9A01 supports up to 125MHz)
+        self.spi.max_speed_hz = 125000000  # 125MHz for maximum speed (GC9A01 maximum)
         self.spi.mode = 0
         
         # Initialize display
