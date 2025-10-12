@@ -340,7 +340,7 @@ class EyeTracker:
         
         print("Eye Tracker started! Press Ctrl+C to stop.")
         
-                try:
+        try:
             # Main loop for OpenCV display (optional)
             while self.running:
                 try:
@@ -357,11 +357,8 @@ class EyeTracker:
                     # Convert RGB to BGR for OpenCV
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     
-                    # Resize for better viewing (make it wider)
-                    display_frame = cv2.resize(frame_bgr, (640, 480), interpolation=cv2.INTER_LINEAR)
-                    
-                    # Display frame
-                    cv2.imshow('Motion Detection', display_frame)
+                    # Display frame at full resolution (already 640x480)
+                    cv2.imshow('Motion Detection', frame_bgr)
                     
                     # Check for 'q' key press to quit
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -373,8 +370,7 @@ class EyeTracker:
         except KeyboardInterrupt:
             print("\nStopping Eye Tracker...")
         finally:
-            self.stop()
-                
+            self.stop()  
     except KeyboardInterrupt:
             print("\nStopping Eye Tracker...")
     finally:
