@@ -61,9 +61,7 @@ class EyeTracker:
         self.timing_total = []
         self.last_perf_print = time.time()
         
-        # SPI timing profiling
-        self.timing_spi_clear = []
-        self.timing_spi_eye = []
+        # SPI timing profiling (simplified)
         self.timing_spi_total = []
         
         # Threading
@@ -81,14 +79,6 @@ class EyeTracker:
         self.eye_cache = {}
         self.cache_size = 50  # Cache 50 eye positions (more aggressive)
         self.last_rendered_pos = None
-        
-        # Smart clearing optimization
-        self.last_clear_time = 0
-        self.clear_interval = 0.3  # Clear every 300ms to reduce flickering
-        self.needs_clear = True
-        self.last_clear_pos = None
-        self.full_clear_counter = 0
-        self.full_clear_interval = 30  # Full clear every 30 updates
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -378,24 +368,16 @@ class EyeTracker:
         avg_display = sum(self.timing_display) / len(self.timing_display) if self.timing_display else 0
         avg_total = sum(self.timing_total) / len(self.timing_total)
         
-        # Calculate data transfer (now includes smart clearing + partial eye)
-        eye_window_bytes = 100 * 100 * 2  # Eye window
-        clear_window_bytes = 120 * 120 * 2  # Clear window (only when needed)
-        total_transfer = eye_window_bytes + (clear_window_bytes if self.timing_spi_clear else 0)
-        
-        # SPI timing analysis
-        avg_spi_clear = sum(self.timing_spi_clear) / len(self.timing_spi_clear) if self.timing_spi_clear else 0
-        avg_spi_eye = sum(self.timing_spi_eye) / len(self.timing_spi_eye) if self.timing_spi_eye else 0
+        # Calculate data transfer (full screen update)
+        full_screen_bytes = WIDTH * HEIGHT * 2  # Full screen RGB565
         
         print("=" * 60)
         print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
         print(f"  Camera Capture:   {avg_capture:.2f}ms")
         print(f"  Motion Detection: {avg_motion:.2f}ms")
-        print(f"  Display Update:   {avg_display:.2f}ms (smart clear + eye)")
-        print(f"    SPI Clear:      {avg_spi_clear:.2f}ms ({len(self.timing_spi_clear)} clears)")
-        print(f"    SPI Eye:        {avg_spi_eye:.2f}ms")
+        print(f"  Display Update:    {avg_display:.2f}ms (full screen)")
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
-        print(f"  Data Transfer:    {total_transfer:,} bytes (optimized)")
+        print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
         
         # Calculate theoretical max FPS
         theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
@@ -407,8 +389,6 @@ class EyeTracker:
         self.timing_motion.clear()
         self.timing_display.clear()
         self.timing_total.clear()
-        self.timing_spi_clear.clear()
-        self.timing_spi_eye.clear()
     
     def camera_thread(self):
         """Optimized camera thread with performance timing"""
@@ -521,121 +501,28 @@ class EyeTracker:
                 
                 if position_changed or blink_changed:
                     t0 = time.time()
-                    current_time = time.time()
-                    
-                    # OPTIMIZATION 1: Smart clearing - clear less frequently to reduce flickering
-                    should_clear = ((current_time - self.last_clear_time) >= self.clear_interval or 
-                                  self.last_clear_pos is None or
-                                  abs(eye_x - self.last_clear_pos[0]) > 50 or 
-                                  abs(eye_y - self.last_clear_pos[1]) > 50)
-                    
-                    # Full clear every N updates to prevent persistent ghosting
-                    self.full_clear_counter += 1
-                    should_full_clear = self.full_clear_counter >= self.full_clear_interval
-                    
-                    if should_clear or should_full_clear:
-                        if should_full_clear:
-                            # Full screen clear to eliminate all ghosting
-                            window_size = WIDTH
-                            x_start, x_end = 0, WIDTH - 1
-                            y_start, y_end = 0, HEIGHT - 1
-                            self.full_clear_counter = 0
-                        else:
-                            # OPTIMIZATION 2: Clear larger region to prevent ghosting
-                            # Calculate larger region to clear (covers eye movement range)
-                            window_size = 140  # Larger window to cover movement
-                            x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
-                            x_end = min(WIDTH - 1, x_start + window_size - 1)
-                            y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
-                            y_end = min(HEIGHT - 1, y_start + window_size - 1)
-                        
-                        # Clear only the eye region
-                        self.display._write_command(0x2A)  # Column address set
-                        self.display._write_data([0x00, x_start, 0x00, x_end])
-                        self.display._write_command(0x2B)  # Row address set
-                        self.display._write_data([0x00, y_start, 0x00, y_end])
-                        self.display._write_command(0x2C)  # Memory write
-                        
-                        # OPTIMIZATION 12: Profile SPI timing
-                        spi_start = time.time()
-                        
-                        # Send black pixels for background
-                        GPIO.output(self.display.dc_pin, GPIO.HIGH)
-                        GPIO.output(self.display.cs_pin, GPIO.LOW)
-                        
-                        actual_width = x_end - x_start + 1
-                        actual_height = y_end - y_start + 1
-                        clear_bytes = actual_width * actual_height * 2
-                        black_pixel = b'\x00\x00'
-                        
-                        # Batch send black pixels in smaller chunks
-                        chunk_size = 2048  # Reduced to avoid argument limit
-                        for i in range(0, clear_bytes, chunk_size):
-                            chunk = black_pixel * (chunk_size // 2)
-                            if i + chunk_size > clear_bytes:
-                                remaining = clear_bytes - i
-                                chunk = black_pixel * (remaining // 2)
-                            self.display.spi.writebytes(chunk)
-                        
-                        GPIO.output(self.display.cs_pin, GPIO.HIGH)
-                        
-                        # Record SPI clear timing
-                        spi_clear_time = (time.time() - spi_start) * 1000
-                        self.timing_spi_clear.append(spi_clear_time)
-                        
-                        self.last_clear_time = current_time
-                        self.last_clear_pos = (eye_x, eye_y)
                     
                     # Generate eye image
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
                     
-                    # OPTIMIZATION 3: Reuse SPI window when possible
-                    # OPTIMIZATION 4: Dynamically resize update window based on eye movement
-                    window_size = 100
-                    
-                    # Calculate window bounds centered on eye, clamped to screen
-                    x_start = max(0, min(WIDTH - window_size, int(eye_x - window_size//2)))
-                    x_end = min(WIDTH - 1, x_start + window_size - 1)
-                    y_start = max(0, min(HEIGHT - window_size, int(eye_y - window_size//2)))
-                    y_end = min(HEIGHT - 1, y_start + window_size - 1)
-                    
-                    # Adjust window size if clamped to edges
-                    actual_width = x_end - x_start + 1
-                    actual_height = y_end - y_start + 1
-                    
-                    # Set partial window for eye
+                    # SIMPLE: Full screen update - no smart clearing, no windows
                     self.display._write_command(0x2A)  # Column address set
-                    self.display._write_data([0x00, x_start, 0x00, x_end])
+                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
                     self.display._write_command(0x2B)  # Row address set
-                    self.display._write_data([0x00, y_start, 0x00, y_end])
+                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
                     self.display._write_command(0x2C)  # Memory write
                     
-                    # Extract only the dynamic window region from full image
-                    row_bytes = WIDTH * 2
-                    window_bytes = actual_width * 2
-                    partial_data = bytearray()
-                    
-                    for row in range(y_start, y_end + 1):
-                        row_offset = row * row_bytes + x_start * 2
-                        partial_data.extend(rgb565_bytes[row_offset:row_offset + window_bytes])
-                    
-                    # OPTIMIZATION 7: Batch SPI transfers instead of multiple small chunks
-                    spi_eye_start = time.time()
-                    
+                    # Send full screen data
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     GPIO.output(self.display.cs_pin, GPIO.LOW)
                     
-                    # Send data in smaller chunks to avoid "Argument list size exceeds 4096 bytes"
-                    chunk_size = 2048  # Reduced chunk size to avoid argument limit
-                    for i in range(0, len(partial_data), chunk_size):
-                        chunk = partial_data[i:i+chunk_size]
+                    # Send data in chunks to avoid argument limit
+                    chunk_size = 2048
+                    for i in range(0, len(rgb565_bytes), chunk_size):
+                        chunk = rgb565_bytes[i:i+chunk_size]
                         self.display.spi.writebytes(chunk)
                     
                     GPIO.output(self.display.cs_pin, GPIO.HIGH)
-                    
-                    # Record SPI eye timing
-                    spi_eye_time = (time.time() - spi_eye_start) * 1000
-                    self.timing_spi_eye.append(spi_eye_time)
                     
                     display_time = (time.time() - t0) * 1000  # ms
                     self.timing_display.append(display_time)
