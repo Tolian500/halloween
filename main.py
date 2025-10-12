@@ -9,6 +9,7 @@ import spidev
 from PIL import Image, ImageDraw, ImageFont
 import threading
 import queue
+import argparse
 
 # Import the GC9A01 display class from our test script
 from test_gc9a01 import GC9A01
@@ -23,11 +24,12 @@ WIDTH = 240
 HEIGHT = 240
 
 class EyeTracker:
-    def __init__(self):
+    def __init__(self, enable_preview=True):
         self.display = None
         self.camera = None
         self.face_cascade = None
         self.running = False
+        self.enable_preview = enable_preview  # NEW: Control preview window
         
         # Eye tracking variables
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
@@ -40,7 +42,7 @@ class EyeTracker:
         self.current_fps = 0
         
         # Threading
-        self.frame_queue = queue.Queue(maxsize=1)  # Reduced to 1 for less memory
+        self.frame_queue = queue.Queue(maxsize=1) if enable_preview else None
         self.display_thread = None
         
         # Motion detection variables
@@ -74,42 +76,40 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with full sensor mode for maximum FOV"""
+        """Initialize camera with grayscale for maximum performance"""
         try:
             self.camera = Picamera2()
             
-            # Use sensor's full resolution for maximum FOV, then downscale
-            # This prevents cropping and gives you the full wide angle
+            # Use grayscale (YUV420) for better performance
             config = self.camera.create_video_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                raw={"size": self.camera.sensor_resolution}  # Use full sensor for FOV
+                main={"size": (640, 480), "format": "YUV420"},
+                raw={"size": self.camera.sensor_resolution}
             )
             self.camera.configure(config)
             self.camera_width = 640
             self.camera_height = 480
             
             self.camera.start()
-            print(f"Camera initialized at {self.camera_width}x{self.camera_height} with full FOV!")
+            print(f"Camera initialized at {self.camera_width}x{self.camera_height} (Grayscale) with full FOV!")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
             return True
         except Exception as e:
-            print(f"Failed to initialize camera: {e}")
-            print("Trying alternative configuration...")
+            print(f"Failed to initialize grayscale camera: {e}")
+            print("Trying RGB fallback...")
             try:
-                # Fallback: Use lores stream for full FOV
+                # Fallback to RGB
                 config = self.camera.create_video_configuration(
                     main={"size": (640, 480), "format": "RGB888"},
-                    lores={"size": (640, 480)},
-                    display="lores"
+                    raw={"size": self.camera.sensor_resolution}
                 )
                 self.camera.configure(config)
                 self.camera_width = 640
                 self.camera_height = 480
                 self.camera.start()
-                print(f"Camera initialized with alternative config at {self.camera_width}x{self.camera_height}")
+                print(f"Camera initialized with RGB at {self.camera_width}x{self.camera_height}")
                 return True
             except Exception as e2:
-                print(f"Alternative camera init also failed: {e2}")
+                print(f"Camera init failed: {e2}")
                 return False
     
     def init_face_detection(self):
@@ -156,7 +156,7 @@ class EyeTracker:
             return False
     
     def create_eye_image(self, eye_x, eye_y):
-        """Create eye image with caching - Optimization #1"""
+        """Create BIGGER eye image with caching - 2x size"""
         # Round to nearest 10 pixels for cache key
         cache_x = round(eye_x / 10) * 10
         cache_y = round(eye_y / 10) * 10
@@ -170,15 +170,15 @@ class EyeTracker:
         image = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
         draw = ImageDraw.Draw(image)
         
-        # Eye parameters
-        eye_size = 80
-        iris_size = 60
-        pupil_size = 30
-        highlight_size = 15
+        # BIGGER Eye parameters (2x size)
+        eye_size = 160  # Was 80
+        iris_size = 120  # Was 60
+        pupil_size = 60  # Was 30
+        highlight_size = 30  # Was 15
         
-        # Calculate eye position (clamp to display bounds)
+        # Calculate eye position (clamp to display bounds with margin)
         eye_x = max(eye_size//2, min(WIDTH - eye_size//2, eye_x))
-        eye_y = max(eye_size//2, min(WIDTH - eye_size//2, eye_y))
+        eye_y = max(eye_size//2, min(HEIGHT - eye_size//2, eye_y))
         
         # Draw eyelid (simplified - less vertices)
         eyelid_path = [
@@ -202,8 +202,8 @@ class EyeTracker:
                     fill=(0, 0, 0))
         
         # Draw highlight
-        highlight_x = eye_x - highlight_size//2 + 10
-        highlight_y = eye_y - highlight_size//2 - 5
+        highlight_x = eye_x - highlight_size//2 + 20  # Was +10
+        highlight_y = eye_y - highlight_size//2 - 10  # Was -5
         draw.ellipse([highlight_x, highlight_y, highlight_x + highlight_size, highlight_y + highlight_size], 
                     fill=(255, 255, 255))
         
@@ -216,12 +216,18 @@ class EyeTracker:
         return image
     
     def detect_motion(self, frame):
-        """Optimized motion detection - Optimization #5"""
-        # Downsample even more for faster processing (160x120)
+        """Optimized motion detection with grayscale support"""
+        # Downsample for faster processing (160x120)
         small_frame = cv2.resize(frame, (160, 120), interpolation=cv2.INTER_NEAREST)
         
-        # Convert to grayscale
-        gray = cv2.cvtColor(small_frame, cv2.COLOR_RGB2GRAY)
+        # Convert to grayscale (handle both YUV and RGB)
+        if len(small_frame.shape) == 3:
+            # RGB image
+            gray = cv2.cvtColor(small_frame, cv2.COLOR_RGB2GRAY)
+        else:
+            # Already grayscale (Y channel from YUV420)
+            gray = small_frame
+        
         # Smaller blur kernel for speed
         gray = cv2.GaussianBlur(gray, (11, 11), 0)
         
@@ -266,7 +272,7 @@ class EyeTracker:
         return []
     
     def update_eye_position(self, motion_boxes):
-        """Update eye position based on motion detection"""
+        """Update eye position with BIGGER movement range"""
         if motion_boxes and len(motion_boxes) > 0:
             # Use the first detected motion
             x, y, w, h = motion_boxes[0]
@@ -277,9 +283,10 @@ class EyeTracker:
             norm_x = (motion_center_x - self.camera_width//2) / (self.camera_width//2)
             norm_y = (motion_center_y - self.camera_height//2) / (self.camera_height//2)
             
-            # Map to display coordinates (invert X axis so eye follows correctly)
-            eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 40)  # Inverted X
-            eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 40)
+            # Map to display coordinates with MUCH larger range (margin to margin)
+            # Changed from 40px margin to 10px margin for more movement
+            eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 10)  # Inverted X, less margin
+            eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 10)  # Less margin
             
             self.target_eye_position = (eye_x, eye_y)
         else:
@@ -329,16 +336,17 @@ class EyeTracker:
                 # Update FPS
                 self.update_fps()
                 
-                # Add frame to queue only if display needs it
-                try:
-                    self.frame_queue.put_nowait((frame, motion_boxes))
-                except queue.Full:
-                    # Drop oldest frame
+                # Add frame to queue only if preview is enabled
+                if self.enable_preview and self.frame_queue:
                     try:
-                        self.frame_queue.get_nowait()
                         self.frame_queue.put_nowait((frame, motion_boxes))
-                    except:
-                        pass
+                    except queue.Full:
+                        # Drop oldest frame
+                        try:
+                            self.frame_queue.get_nowait()
+                            self.frame_queue.put_nowait((frame, motion_boxes))
+                        except:
+                            pass
                 
             except Exception as e:
                 print(f"Camera thread error: {e}")
@@ -369,7 +377,7 @@ class EyeTracker:
                 # Reduced from 60 FPS to 30 FPS - Optimization #2
                 time.sleep(1.0/30.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     
@@ -390,7 +398,26 @@ class EyeTracker:
         print("Eye Tracker stopped")
 
 def main():
-    eye_tracker = EyeTracker()
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Eye Tracker with GC9A01 Display')
+    parser.add_argument('--no-preview', action='store_true', 
+                       help='Disable preview window for maximum performance')
+    parser.add_argument('--fps-test', action='store_true',
+                       help='Same as --no-preview (for FPS testing)')
+    args = parser.parse_args()
+    
+    # Determine if preview should be enabled
+    enable_preview = not (args.no_preview or args.fps_test)
+    
+    # Create and start tracker
+    eye_tracker = EyeTracker(enable_preview=enable_preview)
+    
+    if not enable_preview:
+        print("=" * 50)
+        print("FPS TEST MODE - No preview window")
+        print("Maximum performance enabled")
+        print("=" * 50)
+    
     eye_tracker.start()
 
 if __name__ == "__main__":

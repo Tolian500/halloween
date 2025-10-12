@@ -5,6 +5,7 @@ Main loop for the eye tracker - separated to avoid indentation issues
 
 import cv2
 import queue
+import time
 
 
 def run_eye_tracker(eye_tracker):
@@ -34,11 +35,14 @@ def run_eye_tracker(eye_tracker):
     camera_thread = threading.Thread(target=eye_tracker.camera_thread, daemon=True)
     camera_thread.start()
     
-    print("Eye Tracker started! Press Ctrl+C to stop.")
+    if eye_tracker.enable_preview:
+        print("Eye Tracker started with preview! Press 'q' in preview window to quit.")
+    else:
+        print("Eye Tracker started (no preview - max performance)! Press Ctrl+C to stop.")
     
     try:
-        # Main loop for OpenCV display (optional)
-        while eye_tracker.running:
+        # Main loop for OpenCV display (only if preview enabled)
+        while eye_tracker.running and eye_tracker.enable_preview:
             try:
                 frame, motion_boxes = eye_tracker.frame_queue.get(timeout=1.0)
                 
@@ -50,8 +54,12 @@ def run_eye_tracker(eye_tracker):
                     center_y = y + h//2
                     cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
                 
-                # Convert RGB to BGR for OpenCV
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    # Convert to BGR for OpenCV (handle grayscale)
+                    if len(frame.shape) == 3:
+                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    else:
+                        # Grayscale - convert to BGR for display
+                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 
                 # Resize for display if needed (keep aspect ratio)
                 display_height = 480
@@ -69,6 +77,11 @@ def run_eye_tracker(eye_tracker):
                     
             except queue.Empty:
                 continue
+        
+        # If no preview, just wait for Ctrl+C
+        if not eye_tracker.enable_preview:
+            while eye_tracker.running:
+                time.sleep(0.1)
                 
     except KeyboardInterrupt:
         print("\nStopping Eye Tracker...")
