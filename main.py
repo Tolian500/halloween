@@ -277,8 +277,8 @@ class EyeTracker:
             norm_x = (motion_center_x - self.camera_width//2) / (self.camera_width//2)
             norm_y = (motion_center_y - self.camera_height//2) / (self.camera_height//2)
             
-            # Map to display coordinates
-            eye_x = WIDTH//2 + norm_x * (WIDTH//2 - 40)  # 40px margin
+            # Map to display coordinates (invert X axis so eye follows correctly)
+            eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 40)  # Inverted X
             eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 40)
             
             self.target_eye_position = (eye_x, eye_y)
