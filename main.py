@@ -38,11 +38,12 @@ class EyeTracker:
         self.last_motion_time = time.time()
         self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
         
-        # Blinking
+        # Blinking (more natural timing)
         self.is_blinking = False
         self.blink_state = 1.0  # 1.0 = open, 0.0 = closed
+        self.blink_direction = -1  # -1 = closing, 1 = opening
         self.last_blink_time = time.time()
-        self.next_blink_delay = np.random.uniform(2, 5)  # Random blink every 2-5 seconds
+        self.next_blink_delay = np.random.uniform(3, 8)  # Random blink every 3-8 seconds (more realistic)
         
         # Performance monitoring
         self.frame_count = 0
@@ -424,27 +425,32 @@ class EyeTracker:
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
-                # Handle blinking
+                # Handle blinking (more natural, human-like)
                 current_time = time.time()
                 if not self.is_blinking and (current_time - self.last_blink_time) >= self.next_blink_delay:
                     # Start blink
                     self.is_blinking = True
                     self.blink_state = 1.0
+                    self.blink_direction = -1  # Start closing
                 
                 if self.is_blinking:
-                    # Animate blink (fast close, fast open)
-                    if self.blink_state > 0.0:
-                        self.blink_state -= 0.4  # Close quickly
-                        if self.blink_state < 0.0:
+                    # Animate blink with smooth, natural timing
+                    # Human blink: ~100-150ms total (close faster than open)
+                    if self.blink_direction == -1:
+                        # Closing phase (faster)
+                        self.blink_state -= 0.25  # Close in ~4 frames (200ms at 20fps)
+                        if self.blink_state <= 0.0:
                             self.blink_state = 0.0
+                            self.blink_direction = 1  # Switch to opening
                     else:
-                        # Eye closed, now open
-                        self.blink_state += 0.5  # Open quickly
+                        # Opening phase (slightly slower)
+                        self.blink_state += 0.2  # Open in ~5 frames (250ms at 20fps)
                         if self.blink_state >= 1.0:
                             self.blink_state = 1.0
                             self.is_blinking = False
                             self.last_blink_time = current_time
-                            self.next_blink_delay = np.random.uniform(2, 5)
+                            # More realistic timing: 3-8 seconds between blinks
+                            self.next_blink_delay = np.random.uniform(3, 8)
                 
                 # Check if position or blink state changed
                 eye_x, eye_y = self.current_eye_position
@@ -455,19 +461,37 @@ class EyeTracker:
                     t0 = time.time()
                     rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
                     
-                    # Send RGB565 bytes directly to display (FAST!)
+                    # OPTIMIZATION: Update only center region (120x120) instead of full screen!
+                    # This reduces data transfer by 75%! (14,400 pixels vs 57,600)
+                    window_size = 120
+                    x_start = (WIDTH - window_size) // 2  # 60
+                    x_end = x_start + window_size - 1     # 179
+                    y_start = (HEIGHT - window_size) // 2 # 60
+                    y_end = y_start + window_size - 1     # 179
+                    
+                    # Set partial window (CASET/RASET commands)
                     self.display._write_command(0x2A)  # Column address set
-                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+                    self.display._write_data([0x00, x_start, 0x00, x_end])
                     self.display._write_command(0x2B)  # Row address set
-                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+                    self.display._write_data([0x00, y_start, 0x00, y_end])
                     self.display._write_command(0x2C)  # Memory write
                     
-                    # Send RGB565 data in optimized chunks
+                    # Extract only the center 120x120 region from full image
+                    # RGB565 is 2 bytes per pixel, 240 pixels per row
+                    row_bytes = WIDTH * 2
+                    window_bytes = window_size * 2
+                    partial_data = bytearray()
+                    
+                    for row in range(y_start, y_end + 1):
+                        row_offset = row * row_bytes + x_start * 2
+                        partial_data.extend(rgb565_bytes[row_offset:row_offset + window_bytes])
+                    
+                    # Send partial RGB565 data in optimized chunks
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     GPIO.output(self.display.cs_pin, GPIO.LOW)
                     chunk_size = 4000
-                    for i in range(0, len(rgb565_bytes), chunk_size):
-                        chunk = rgb565_bytes[i:i+chunk_size]
+                    for i in range(0, len(partial_data), chunk_size):
+                        chunk = partial_data[i:i+chunk_size]
                         self.display.spi.writebytes(chunk)
                     GPIO.output(self.display.cs_pin, GPIO.HIGH)
                     
@@ -478,7 +502,7 @@ class EyeTracker:
                 # 20 FPS - faster updates for smoother motion
                 time.sleep(1.0/20.0)
                 
-            except Exception as e:
+    except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
     
