@@ -169,9 +169,9 @@ class EyeTracker:
     
     def create_eye_image(self, eye_x, eye_y, blink_state=1.0):
         """Create eye image with blinking support + RGB565 pre-conversion"""
-        # Round to nearest 10 pixels for smoother movement (still good caching)
-        cache_x = round(eye_x / 10) * 10
-        cache_y = round(eye_y / 10) * 10
+        # Round to nearest 5 pixels for smoother movement (still good caching)
+        cache_x = round(eye_x / 5) * 5
+        cache_y = round(eye_y / 5) * 5
         blink_key = round(blink_state * 10) / 10  # Cache different blink states
         cache_key = (cache_x, cache_y, blink_key)
         
@@ -179,10 +179,10 @@ class EyeTracker:
         if cache_key in self.eye_cache:
             return self.eye_cache[cache_key]
         
-        # OPTIMIZATION 8: Reduce rendered image resolution (80x80 instead of 240x240)
-        # Render at ultra-low resolution then scale up - 9x faster!
-        render_size = 80
-        scale_factor = WIDTH // render_size  # 3x scale
+        # OPTIMIZATION 8: Reduce rendered image resolution (120x120 instead of 240x240)
+        # Render at half resolution then scale up - 4x faster!
+        render_size = 120
+        scale_factor = WIDTH // render_size  # 2x scale
         
         # Create smaller image for rendering
         img_array = np.zeros((render_size, render_size, 3), dtype=np.uint8)
@@ -191,9 +191,9 @@ class EyeTracker:
         render_x = int(eye_x // scale_factor)
         render_y = int(eye_y // scale_factor)
         
-        # Smaller eye for faster display (60% size reduction)
-        iris_radius = 20  # Scaled down from 50
-        pupil_radius = 10  # Scaled down from 25
+        # Smaller eye for faster display (40% size reduction)
+        iris_radius = 25  # Scaled down from 50
+        pupil_radius = 12  # Scaled down from 25
         
         # Calculate eye position (clamp to render bounds with margin)
         render_x = int(max(iris_radius, min(render_size - iris_radius, render_x)))
@@ -384,9 +384,9 @@ class EyeTracker:
         print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
         print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (YUV420)")
         print(f"  Motion Resolution: 32x32 (grayscale)")
-        print(f"  Display Resolution: 80x80 → 240x240 (3x scale)")
-        print(f"  Display FPS:       15 Hz (optimized)")
-        print(f"  SPI Speed:         125 MHz (DMA)")
+        print(f"  Display Resolution: 120x120 → 240x240 (2x scale)")
+        print(f"  Display FPS:       20 Hz (proven)")
+        print(f"  SPI Speed:         80 MHz (stable)")
         print(f"  Frame Skipping:    Every {self.frame_skip_interval + 1} frames")
         print(f"  Motion Detection:  Every {self.motion_check_interval} frames")
         
@@ -517,7 +517,7 @@ class EyeTracker:
                 
                 # OPTIMIZATION 11: Skip updates if eye position hasn't changed significantly
                 eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 10) * 10, round(eye_y / 10) * 10, round(self.blink_state * 10) / 10)
+                rounded_pos = (round(eye_x / 5) * 5, round(eye_y / 5) * 5, round(self.blink_state * 10) / 10)
                 
                 # Only update if moved significantly or blink state changed
                 position_changed = rounded_pos != self.last_rendered_pos
@@ -540,12 +540,11 @@ class EyeTracker:
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     GPIO.output(self.display.cs_pin, GPIO.LOW)
                     
-                    # Send data in chunks using DMA for maximum speed
+                    # Send data in chunks to avoid argument limit
                     chunk_size = 2048
                     for i in range(0, len(rgb565_bytes), chunk_size):
                         chunk = rgb565_bytes[i:i+chunk_size]
-                        # Use xfer2 for DMA efficiency (faster than writebytes)
-                        self.display.spi.xfer2(chunk)
+                        self.display.spi.writebytes(chunk)
                     
                     GPIO.output(self.display.cs_pin, GPIO.HIGH)
                     
@@ -554,8 +553,8 @@ class EyeTracker:
                     self.last_rendered_pos = rounded_pos
                     self.last_blink_state = self.blink_state
                 
-                # 15 FPS - optimized for performance while maintaining smoothness
-                time.sleep(1.0/15.0)
+                # 20 FPS - back to proven working settings
+                time.sleep(1.0/20.0)
                 
             except Exception as e:
                 print(f"Display thread error: {e}")
