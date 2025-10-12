@@ -41,6 +41,13 @@ class EyeTracker:
         self.last_fps_time = time.time()
         self.current_fps = 0
         
+        # Performance timing
+        self.timing_capture = []
+        self.timing_motion = []
+        self.timing_display = []
+        self.timing_total = []
+        self.last_perf_print = time.time()
+        
         # Threading
         self.frame_queue = queue.Queue(maxsize=1) if enable_preview else None
         self.display_thread = None
@@ -63,7 +70,7 @@ class EyeTracker:
         
         # Motion detection optimization (optimization #5)
         self.motion_check_counter = 0
-        self.motion_check_interval = 3  # Check motion every 3 frames (more aggressive)
+        self.motion_check_interval = 1  # Check EVERY frame (motion is super fast now!)
         
     def init_display(self):
         """Initialize the GC9A01 display"""
@@ -292,29 +299,77 @@ class EyeTracker:
             self.current_fps = self.frame_count / (current_time - self.last_fps_time)
             self.frame_count = 0
             self.last_fps_time = current_time
-            print(f"FPS: {self.current_fps:.1f}")
+            # Don't print here - use print_performance() instead
+    
+    def print_performance(self):
+        """Print detailed performance statistics"""
+        if not self.timing_capture:
+            return
+        
+        avg_capture = sum(self.timing_capture) / len(self.timing_capture)
+        avg_motion = sum(self.timing_motion) / len(self.timing_motion) if self.timing_motion else 0
+        avg_display = sum(self.timing_display) / len(self.timing_display) if self.timing_display else 0
+        avg_total = sum(self.timing_total) / len(self.timing_total)
+        
+        print("=" * 60)
+        print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
+        print(f"  Camera Capture:   {avg_capture:.2f}ms")
+        print(f"  Motion Detection: {avg_motion:.2f}ms")
+        print(f"  Display Update:   {avg_display:.2f}ms (async thread)")
+        print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
+        
+        # Calculate theoretical max FPS
+        theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
+        print(f"Theoretical Max FPS: {theoretical_fps:.1f}")
+        print("=" * 60)
+        
+        # Clear timing arrays
+        self.timing_capture.clear()
+        self.timing_motion.clear()
+        self.timing_display.clear()
+        self.timing_total.clear()
     
     def camera_thread(self):
-        """Optimized camera thread with frame skipping"""
+        """Optimized camera thread with performance timing"""
         while self.running:
             try:
+                frame_start = time.time()
+                
                 # Capture frame
+                t0 = time.time()
                 frame = self.camera.capture_array()
+                capture_time = (time.time() - t0) * 1000  # ms
                 
                 # Frame skipping for motion detection (Optimization #3 & #5)
                 self.motion_check_counter += 1
                 if self.motion_check_counter >= self.motion_check_interval:
                     self.motion_check_counter = 0
+                    
+                    t1 = time.time()
                     motion_boxes = self.detect_motion(frame)
+                    motion_time = (time.time() - t1) * 1000  # ms
                     
                     # Update eye position only when motion detected
                     if motion_boxes is not None:
                         self.update_eye_position(motion_boxes)
+                    
+                    # Store timing
+                    self.timing_capture.append(capture_time)
+                    self.timing_motion.append(motion_time)
                 else:
                     motion_boxes = []
                 
                 # Update FPS
                 self.update_fps()
+                
+                # Total frame time
+                total_time = (time.time() - frame_start) * 1000
+                self.timing_total.append(total_time)
+                
+                # Print detailed performance every 2 seconds
+                if time.time() - self.last_perf_print >= 2.0:
+                    self.print_performance()
+                    self.last_perf_print = time.time()
                 
                 # Add frame to queue only if preview is enabled
                 if self.enable_preview and self.frame_queue:
@@ -333,23 +388,31 @@ class EyeTracker:
                 time.sleep(0.1)
     
     def display_thread_func(self):
-        """Display thread - always update for smooth tracking"""
+        """Display thread - LIMITED to 15 FPS to not block camera"""
         while self.running:
             try:
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
-                # Always update display for smooth visuals
+                # Check if position changed enough to warrant update
                 eye_x, eye_y = self.current_eye_position
-                eye_image = self.create_eye_image(int(eye_x), int(eye_y))
-                self.display.image(eye_image)
+                rounded_pos = (round(eye_x / 5) * 5, round(eye_y / 5) * 5)
                 
-                # 25 FPS (display SPI limit)
-                time.sleep(1.0/25.0)
+                # Only update if moved more than 5 pixels
+                if rounded_pos != self.last_rendered_pos:
+                    t0 = time.time()
+                    eye_image = self.create_eye_image(int(eye_x), int(eye_y))
+                    self.display.image(eye_image)
+                    display_time = (time.time() - t0) * 1000  # ms
+                    self.timing_display.append(display_time)
+                    self.last_rendered_pos = rounded_pos
+                
+                # 15 FPS - SPI transfer is SLOW (60-80ms per frame!)
+                time.sleep(1.0/15.0)
                 
             except Exception as e:
-                        print(f"Display thread error: {e}")
-                        time.sleep(0.1)
+                print(f"Display thread error: {e}")
+                time.sleep(0.1)
     
     def start(self):
         """Start the eye tracker - uses external run function"""

@@ -61,15 +61,9 @@ def run_eye_tracker(eye_tracker):
                     center_y = y + h//2
                     cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
                 
-                # Resize for display if needed (keep aspect ratio)
-                display_height = 480
-                display_width = int(frame_bgr.shape[1] * (display_height / frame_bgr.shape[0]))
-                if display_width > 1280:
-                    display_width = 1280
-                    display_height = int(frame_bgr.shape[0] * (display_width / frame_bgr.shape[1]))
-                
-                display_frame = cv2.resize(frame_bgr, (display_width, display_height))
-                cv2.imshow('Motion Detection', display_frame)
+                # Show at native resolution (120×120) - NO RESIZE for speed!
+                # OpenCV will display small but processing is instant
+                cv2.imshow('Motion Detection', frame_bgr)
                 
                 # Check for 'q' key press to quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):
