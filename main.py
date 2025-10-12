@@ -72,12 +72,40 @@ class EyeTracker:
         """Initialize face detection"""
         try:
             # Load Haar cascade for face detection
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            # Try multiple possible locations
+            cascade_paths = [
+                '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml',
+                '/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml',
+                '/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml',
+                '/home/tolian500/Coding/halloween/haarcascade_frontalface_default.xml',
+                'haarcascade_frontalface_default.xml'
+            ]
+            
+            cascade_path = None
+            for path in cascade_paths:
+                if os.path.exists(path):
+                    cascade_path = path
+                    break
+            
+            if cascade_path is None:
+                print("Haar cascade file not found. Downloading...")
+                # Download the cascade file
+                import urllib.request
+                url = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml'
+                cascade_path = 'haarcascade_frontalface_default.xml'
+                try:
+                    urllib.request.urlretrieve(url, cascade_path)
+                    print(f"Downloaded cascade file to {cascade_path}")
+                except Exception as e:
+                    print(f"Failed to download cascade file: {e}")
+                    print("Please install opencv-data: sudo apt install opencv-data")
+                    return False
+            
             self.face_cascade = cv2.CascadeClassifier(cascade_path)
             if self.face_cascade.empty():
                 print("Failed to load face cascade")
                 return False
-            print("Face detection initialized successfully!")
+            print(f"Face detection initialized successfully using: {cascade_path}")
             return True
         except Exception as e:
             print(f"Failed to initialize face detection: {e}")
