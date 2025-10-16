@@ -51,11 +51,9 @@ class GC9A01_Pi5:
         # Setup SPI (SPI will control CS automatically)
         self.spi = spidev.SpiDev()
         self.spi.open(0, 0)  # Bus 0, Device 0
-        self.spi.max_speed_hz = 16000000  # 16 MHz - slower for stability
+        self.spi.max_speed_hz = 32000000  # 32 MHz - slower for stability
         self.spi.mode = 0
-        self.spi.bits_per_word = 8
-        self.spi.lsbfirst = False
-        print(f"SPI configured: 16 MHz (hardware CS on GPIO {CS_PIN})")
+        print(f"SPI configured: 32 MHz (hardware CS on GPIO {CS_PIN})")
         
         # Initialize display
         self._reset()
@@ -72,26 +70,26 @@ class GC9A01_Pi5:
     def _write_cmd(self, cmd):
         """Write command"""
         GPIO.output(DC_PIN, GPIO.LOW)
-        self.spi.xfer2([cmd])  # xfer2 keeps CS low during transfer
+        self.spi.writebytes([cmd])  # SPI handles CS automatically
     
     def _write_data(self, data):
         """Write data"""
         GPIO.output(DC_PIN, GPIO.HIGH)
         if isinstance(data, int):
-            self.spi.writebytes([data])
+            self.spi.writebytes([data])  # SPI handles CS automatically
         else:
-            # Use writebytes for better performance with larger data
-            self.spi.writebytes(data)
+            self.spi.writebytes(data)  # SPI handles CS automatically
     
     def _init_display(self):
-        """Initialize GC9A01"""
-        # Basic init sequence
+        """Initialize GC9A01 with proper timing"""
+        # Proper initialization sequence
         init_cmds = [
-            (0xEF, None),
-            (0xEB, [0x14]),
+            # Inter Register Enable1
             (0xFE, None),
             (0xEF, None),
-            (0xEB, [0x14]),
+            
+            # Set various parameters
+            (0xEB, [0x14]),            
             (0x84, [0x40]),
             (0x85, [0xFF]),
             (0x86, [0xFF]),
@@ -104,40 +102,49 @@ class GC9A01_Pi5:
             (0x8D, [0x01]),
             (0x8E, [0xFF]),
             (0x8F, [0xFF]),
-            (0xB6, [0x00, 0x20]),
-            (0x36, [0x08]),
-            (0x3A, [0x05]),  # RGB565
-            (0x90, [0x08, 0x08, 0x08, 0x08]),
-            (0xBD, [0x06]),
-            (0xBC, [0x00]),
-            (0xFF, [0x60, 0x01, 0x04]),
-            (0xC3, [0x13]),
-            (0xC4, [0x13]),
-            (0xC9, [0x22]),
-            (0xBE, [0x11]),
-            (0xE1, [0x10, 0x0E]),
-            (0xDF, [0x21, 0x0C, 0x02]),
+            
+            # Display Function Control
+            (0xB6, [0x00, 0x00]),  # Changed from 0x20 to 0x00 for stability
+            
+            # Memory Access Control - CRITICAL for correct orientation/colors
+            (0x36, [0x00]),  # Changed from 0x08 - try different orientations
+            
+            # Pixel Format Set - RGB565 (16-bit)
+            (0x3A, [0x55]),  # 0x55 = RGB565 for both DPI and DBI interfaces
+            
+            # Porch control
+            (0xB5, [0x09, 0x09]),
+            
+            # Power Control
+            (0xC1, [0x13]),  # Power control 1
+            (0xC3, [0x13]),  # Power control 2
+            (0xC4, [0x13]),  # Power control 3
+            (0xC9, [0x22]),  # Power control 4
+            
+            # Gamma
             (0xF0, [0x45, 0x09, 0x08, 0x08, 0x26, 0x2A]),
             (0xF1, [0x43, 0x70, 0x72, 0x36, 0x37, 0x6F]),
             (0xF2, [0x45, 0x09, 0x08, 0x08, 0x26, 0x2A]),
             (0xF3, [0x43, 0x70, 0x72, 0x36, 0x37, 0x6F]),
-            (0xED, [0x1B, 0x0B]),
-            (0xAE, [0x77]),
-            (0xCD, [0x63]),
-            (0x70, [0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0x08, 0x03]),
+            
+            # Frame rate (60Hz)
             (0xE8, [0x34]),
-            (0x35, None),  # Tearing effect on
-            (0x21, None),  # Display inversion on
-            (0x11, None),  # Sleep out
-            (0x29, None),  # Display on
+            
+            # Sleep Out
+            (0x11, None),
         ]
         
         for cmd, data in init_cmds:
             self._write_cmd(cmd)
             if data:
                 self._write_data(data)
+            time.sleep(0.001)  # Small delay between commands
         
-        time.sleep(0.12)
+        time.sleep(0.120)  # Wait 120ms after sleep out
+        
+        # Display ON commands
+        self._write_cmd(0x29)  # Display ON
+        time.sleep(0.020)
     
     def display_image(self, image):
         """Display PIL image"""
@@ -161,10 +168,9 @@ class GC9A01_Pi5:
         # Send data
         GPIO.output(DC_PIN, GPIO.HIGH)
         
-        # Send in moderate chunks (too large = memory issues, too small = CS toggling)
         chunk_size = 4096
         for i in range(0, len(pixels), chunk_size):
-            self.spi.writebytes(pixels[i:i+chunk_size])
+            self.spi.writebytes(pixels[i:i+chunk_size])  # SPI handles CS
     
     def fill(self, color):
         """Fill screen with color (r, g, b)"""
