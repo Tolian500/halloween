@@ -110,7 +110,8 @@ class EyeTracker:
             
             # Higher resolution for better face detection
             config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
+                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
+                lores={"size": (self.camera_width, self.camera_height), "format": "YUV420"}
             )
             self.camera.configure(config)
             
@@ -383,22 +384,9 @@ class EyeTracker:
             try:
                 frame_start = time.time()
                 
-                # Capture frame with skipping (optimization #3)
+                # Capture frame for face detection
                 t0 = time.time()
-                
-                # Skip frames when system overloaded - grab without decoding
-                self.frame_skip_counter += 1
-                if self.frame_skip_counter >= self.frame_skip_interval:
-                    self.frame_skip_counter = 0
-                    frame = self.camera.capture_array()
-                else:
-                    # Skip this frame - reuse previous frame
-                    if not hasattr(self, 'last_frame'):
-                        frame = self.camera.capture_array()
-                    else:
-                        frame = self.last_frame
-                
-                self.last_frame = frame
+                frame = self.camera.capture_array()
                 capture_time = (time.time() - t0) * 1000  # ms
                 
                 # Face detection (every frame for better tracking)
