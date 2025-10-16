@@ -71,9 +71,9 @@ class EyeTracker:
         # Motion detection variables
         self.prev_frame = None
         self.motion_threshold = 30  # Threshold for motion detection
-        self.min_motion_area = 500  # Minimum area for motion
-        self.camera_width = 320  # Good balance between quality and speed
-        self.camera_height = 240  # 4:3 aspect ratio
+        self.min_motion_area = 1000  # Larger minimum area for higher resolution
+        self.camera_width = 640  # 2x higher resolution for better tracking
+        self.camera_height = 480  # 4:3 aspect ratio
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
