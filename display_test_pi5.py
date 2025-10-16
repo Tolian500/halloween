@@ -81,15 +81,14 @@ class GC9A01_Pi5:
             self.spi.writebytes(data)  # SPI handles CS automatically
     
     def _init_display(self):
-        """Initialize GC9A01 with proper timing"""
-        # Proper initialization sequence
-        init_cmds = [
-            # Inter Register Enable1
+        """Initialize GC9A01 - using original working sequence"""
+        # Original initialization sequence from test_gc9a01.py
+        init_commands = [
+            (0xEF, None),
+            (0xEB, [0x14]),
             (0xFE, None),
             (0xEF, None),
-            
-            # Set various parameters
-            (0xEB, [0x14]),            
+            (0xEB, [0x14]),
             (0x84, [0x40]),
             (0x85, [0xFF]),
             (0x86, [0xFF]),
@@ -102,51 +101,47 @@ class GC9A01_Pi5:
             (0x8D, [0x01]),
             (0x8E, [0xFF]),
             (0x8F, [0xFF]),
-            
-            # Display Function Control
-            (0xB6, [0x00, 0x00]),  # Changed from 0x20 to 0x00 for stability
-            
-            # Memory Access Control - CRITICAL for correct orientation/colors
-            # Bit 7: MY (Row order), Bit 6: MX (Column order), Bit 5: MV (Row/Column exchange)
-            # Bit 3: BGR (RGB-BGR order)
-            (0x36, [0x48]),  # MX=1, MV=1 for proper rotation
-            
-            # Pixel Format Set - RGB565 (16-bit)
-            (0x3A, [0x55]),  # 0x55 = RGB565 for both DPI and DBI interfaces
-            
-            # Porch control
-            (0xB5, [0x09, 0x09]),
-            
-            # Power Control
-            (0xC1, [0x13]),  # Power control 1
-            (0xC3, [0x13]),  # Power control 2
-            (0xC4, [0x13]),  # Power control 3
-            (0xC9, [0x22]),  # Power control 4
-            
-            # Gamma
+            (0xB6, [0x00, 0x20]),
+            (0x36, [0x08]),
+            (0x3A, [0x05]),
+            (0x90, [0x08, 0x08, 0x08, 0x08]),
+            (0xBD, [0x06]),
+            (0xBC, [0x00]),
+            (0xFF, [0x60, 0x01, 0x04]),
+            (0xC3, [0x13]),
+            (0xC4, [0x13]),
+            (0xC9, [0x22]),
+            (0xBE, [0x11]),
+            (0xE1, [0x10, 0x0E]),
+            (0xDF, [0x21, 0x0C, 0x02]),
             (0xF0, [0x45, 0x09, 0x08, 0x08, 0x26, 0x2A]),
             (0xF1, [0x43, 0x70, 0x72, 0x36, 0x37, 0x6F]),
             (0xF2, [0x45, 0x09, 0x08, 0x08, 0x26, 0x2A]),
             (0xF3, [0x43, 0x70, 0x72, 0x36, 0x37, 0x6F]),
-            
-            # Frame rate (60Hz)
+            (0xED, [0x1B, 0x0B]),
+            (0xAE, [0x77]),
+            (0xCD, [0x63]),
+            (0x70, [0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0x08, 0x03]),
             (0xE8, [0x34]),
-            
-            # Sleep Out
+            (0x62, [0x18, 0x0D, 0x71, 0xED, 0x70, 0x70, 0x18, 0x0F, 0x71, 0xEF, 0x70, 0x70]),
+            (0x63, [0x18, 0x11, 0x71, 0xF1, 0x70, 0x70, 0x18, 0x13, 0x71, 0xF3, 0x70, 0x70]),
+            (0x64, [0x28, 0x29, 0xF1, 0x01, 0xF1, 0x00, 0x07]),
+            (0x66, [0x3C, 0x00, 0xCD, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00]),
+            (0x67, [0x00, 0x3C, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98]),
+            (0x74, [0x10, 0x85, 0x80, 0x00, 0x00, 0x4E, 0x00]),
+            (0x98, [0x3E, 0x07]),
+            (0x35, None),
+            (0x21, None),
             (0x11, None),
+            (0x29, None),
         ]
         
-        for cmd, data in init_cmds:
+        for cmd, data in init_commands:
             self._write_cmd(cmd)
             if data:
                 self._write_data(data)
-            time.sleep(0.001)  # Small delay between commands
         
-        time.sleep(0.120)  # Wait 120ms after sleep out
-        
-        # Display ON commands
-        self._write_cmd(0x29)  # Display ON
-        time.sleep(0.020)
+        time.sleep(0.1)
     
     def display_image(self, image):
         """Display PIL image"""

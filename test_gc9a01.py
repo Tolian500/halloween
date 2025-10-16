@@ -73,7 +73,7 @@ class GC9A01:
                 for attempt in range(max_retries):
                     try:
                         # Close any existing devices first
-                        for attr in ['cs_device', 'dc_device', 'rst_device']:
+                        for attr in ['dc_device', 'rst_device']:
                             if hasattr(self, attr):
                                 try:
                                     getattr(self, attr).close()
@@ -85,11 +85,10 @@ class GC9A01:
                             print(f"Retry {attempt + 1}/{max_retries}...")
                             time.sleep(1)
                         
-                        # Try to create devices
-                        self.cs_device = DigitalOutputDevice(self.cs_pin, initial_value=True)
+                        # Try to create devices (DC and RST only - CS is handled by SPI)
                         self.dc_device = DigitalOutputDevice(self.dc_pin, initial_value=False)
                         self.rst_device = DigitalOutputDevice(self.rst_pin, initial_value=True)
-                        print(f"GPIO pins configured with gpiozero: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+                        print(f"GPIO pins configured with gpiozero: DC={self.dc_pin}, RST={self.rst_pin}")
                         last_error = None
                         break  # Success!
                         
@@ -127,12 +126,11 @@ class GC9A01:
                 GPIO.setmode(GPIO.BCM)
                 print("Using GPIO.BCM mode")
                 
-                # Setup GPIO pins with error handling
+                # Setup GPIO pins (DC and RST only - CS handled by SPI hardware)
                 try:
-                    GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
                     GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.LOW)
                     GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
-                    print(f"GPIO pins configured: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+                    print(f"GPIO pins configured: DC={self.dc_pin}, RST={self.rst_pin}")
                 except Exception as e:
                     raise Exception(f"GPIO pin setup failed: {e}. Check if pins are already in use.")
             
@@ -152,32 +150,20 @@ class GC9A01:
         """Write command to display"""
         if USE_GPIOZERO:
             self.dc_device.off()  # Command mode
-            self.cs_device.off()  # Select device
         else:
             GPIO.output(self.dc_pin, GPIO.LOW)  # Command mode
-            GPIO.output(self.cs_pin, GPIO.LOW)  # Select device
-        self.spi.writebytes([cmd])
-        if USE_GPIOZERO:
-            self.cs_device.on()  # Deselect device
-        else:
-            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        self.spi.writebytes([cmd])  # SPI handles CS automatically
     
     def _write_data(self, data):
         """Write data to display"""
         if USE_GPIOZERO:
             self.dc_device.on()  # Data mode
-            self.cs_device.off()  # Select device
         else:
             GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-            GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
         if isinstance(data, int):
-            self.spi.writebytes([data])
+            self.spi.writebytes([data])  # SPI handles CS automatically
         else:
-            self.spi.writebytes(data)
-        if USE_GPIOZERO:
-            self.cs_device.on()  # Deselect device
-        else:
-            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+            self.spi.writebytes(data)  # SPI handles CS automatically
     
     def _init_display(self):
         """Initialize the GC9A01 display"""
@@ -280,32 +266,23 @@ class GC9A01:
             pixels.append(rgb565 >> 8)  # High byte
             pixels.append(rgb565 & 0xFF)  # Low byte
         
-        # Send data in optimized chunks for instant update
+        # Send data in optimized chunks
         if USE_GPIOZERO:
             self.dc_device.on()  # Data mode
-            self.cs_device.off()  # Select device
         else:
             GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-            GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
         
         # Use larger chunks for better performance while staying under limit
-        chunk_size = 4000  # Stay under 4096 byte limit
+        chunk_size = 4096
         for i in range(0, len(pixels), chunk_size):
             chunk = pixels[i:i + chunk_size]
-            self.spi.writebytes(chunk)
-        
-        if USE_GPIOZERO:
-            self.cs_device.on()  # Deselect device
-        else:
-            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+            self.spi.writebytes(chunk)  # SPI handles CS automatically
     
     def close(self):
         """Clean up resources"""
         # Clean up GPIO
         if USE_GPIOZERO:
             try:
-                if hasattr(self, 'cs_device'):
-                    self.cs_device.close()
                 if hasattr(self, 'dc_device'):
                     self.dc_device.close()
                 if hasattr(self, 'rst_device'):
