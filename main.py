@@ -71,8 +71,8 @@ class EyeTracker:
         # Face tracking variables
         self.prev_frame = None
         self.face_cascade = None
-        self.camera_width = 640  # Higher resolution for better face detection
-        self.camera_height = 480  # 4:3 aspect ratio
+        self.camera_width = 1640  # Full resolution for Raspberry Pi Camera v2
+        self.camera_height = 1232  # Full resolution 4:3 aspect ratio
         self.face_detection_scale = 1.1
         self.face_detection_min_neighbors = 3  # More sensitive
         
@@ -258,15 +258,23 @@ class EyeTracker:
         # Convert to grayscale for face detection
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         
+        # Scale down for faster detection (but keep full res for display)
+        scale_factor = 0.5  # Scale down to 820x616 for detection
+        small_gray = cv2.resize(gray, None, fx=scale_factor, fy=scale_factor)
+        
         # Detect faces with more sensitive settings
         faces = self.face_cascade.detectMultiScale(
-            gray,
+            small_gray,
             scaleFactor=1.1,
             minNeighbors=3,
-            minSize=(20, 20),  # Smaller minimum size
-            maxSize=(300, 300),  # Add maximum size
+            minSize=(15, 15),  # Smaller minimum size for scaled image
+            maxSize=(200, 200),  # Add maximum size for scaled image
             flags=cv2.CASCADE_SCALE_IMAGE
         )
+        
+        # Scale face coordinates back up to full resolution
+        if len(faces) > 0:
+            faces = (faces / scale_factor).astype(int)
         
         return faces
     
@@ -354,7 +362,7 @@ class EyeTracker:
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
         print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
         print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (RGB888)")
-        print(f"  Face Detection:   OpenCV Haar Cascade (sensitive)")
+        print(f"  Face Detection:   OpenCV Haar Cascade (scaled 0.5x)")
         print(f"  Display Resolution: 240x240 (full resolution)")
         print(f"  Display FPS:       30 Hz")
         print(f"  SPI Speed:         100 MHz")
