@@ -5,7 +5,7 @@ numpy>=1.21.0
 
 
 # Requirements for GC9A01 display test on Raspberry Pi 5
-# Note: gpiod is the modern GPIO library for Raspberry Pi 5
-# Install system dependencies: sudo apt install python3-pil python3-gpiod
+# Install system dependencies: sudo apt install python3-pil python3-rpi.gpio python3-spidev
 Pillow>=9.0.0
+RPi.GPIO>=0.7.0
 spidev>=3.5
