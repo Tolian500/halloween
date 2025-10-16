@@ -12,7 +12,7 @@ RST -> GPIO 27 (pin 13)
 """
 
 import time
-import RPi.GPIO as GPIO
+import gpiod
 import spidev
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,11 +33,31 @@ class GC9A01:
         self.dc_pin = dc_pin
         self.rst_pin = rst_pin
         
-        # Setup GPIO
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.cs_pin, GPIO.OUT)
-        GPIO.setup(self.dc_pin, GPIO.OUT)
-        GPIO.setup(self.rst_pin, GPIO.OUT)
+        # Setup GPIO using gpiod
+        # Try different gpiochip names for different Pi models
+        chip_names = ['gpiochip4', 'gpiochip0', 'gpiochip1']
+        self.chip = None
+        
+        for chip_name in chip_names:
+            try:
+                self.chip = gpiod.Chip(chip_name)
+                print(f"Using GPIO chip: {chip_name}")
+                break
+            except Exception as e:
+                print(f"Failed to open {chip_name}: {e}")
+                continue
+        
+        if self.chip is None:
+            raise Exception("Could not open any GPIO chip. Make sure gpiod is installed and SPI/GPIO are enabled.")
+        
+        self.cs_line = self.chip.get_line(self.cs_pin)
+        self.dc_line = self.chip.get_line(self.dc_pin)
+        self.rst_line = self.chip.get_line(self.rst_pin)
+        
+        # Request lines for output
+        self.cs_line.request(consumer="gc9a01_cs", type=gpiod.LINE_REQ_DIR_OUT)
+        self.dc_line.request(consumer="gc9a01_dc", type=gpiod.LINE_REQ_DIR_OUT)
+        self.rst_line.request(consumer="gc9a01_rst", type=gpiod.LINE_REQ_DIR_OUT)
         
         # Setup SPI
         self.spi = spidev.SpiDev()
@@ -50,27 +70,27 @@ class GC9A01:
     
     def _write_command(self, cmd):
         """Write command to display"""
-        GPIO.output(self.dc_pin, GPIO.LOW)  # Command mode
-        GPIO.output(self.cs_pin, GPIO.LOW)  # Select device
+        self.dc_line.set_value(0)  # Command mode
+        self.cs_line.set_value(0)  # Select device
         self.spi.writebytes([cmd])
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        self.cs_line.set_value(1)  # Deselect device
     
     def _write_data(self, data):
         """Write data to display"""
-        GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-        GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
+        self.dc_line.set_value(1)  # Data mode
+        self.cs_line.set_value(0)  # Select device
         if isinstance(data, int):
             self.spi.writebytes([data])
         else:
             self.spi.writebytes(data)
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        self.cs_line.set_value(1)  # Deselect device
     
     def _init_display(self):
         """Initialize the GC9A01 display"""
         # Reset display
-        GPIO.output(self.rst_pin, GPIO.LOW)
+        self.rst_line.set_value(0)
         time.sleep(0.01)
-        GPIO.output(self.rst_pin, GPIO.HIGH)
+        self.rst_line.set_value(1)
         time.sleep(0.01)
         
         # GC9A01 initialization sequence
@@ -161,8 +181,8 @@ class GC9A01:
             pixels.append(rgb565 & 0xFF)  # Low byte
         
         # Send data in optimized chunks for instant update
-        GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-        GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
+        self.dc_line.set_value(1)  # Data mode
+        self.cs_line.set_value(0)  # Select device
         
         # Use larger chunks for better performance while staying under limit
         chunk_size = 4000  # Stay under 4096 byte limit
@@ -170,12 +190,22 @@ class GC9A01:
             chunk = pixels[i:i + chunk_size]
             self.spi.writebytes(chunk)
         
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        self.cs_line.set_value(1)  # Deselect device
     
     def close(self):
         """Clean up resources"""
-        GPIO.cleanup()
-        self.spi.close()
+        # Release GPIO lines
+        if hasattr(self, 'cs_line'):
+            self.cs_line.release()
+        if hasattr(self, 'dc_line'):
+            self.dc_line.release()
+        if hasattr(self, 'rst_line'):
+            self.rst_line.release()
+        if hasattr(self, 'chip'):
+            self.chip.close()
+        # Close SPI
+        if hasattr(self, 'spi'):
+            self.spi.close()
 
 def init_display():
     """Initialize the GC9A01 display"""
