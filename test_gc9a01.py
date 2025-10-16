@@ -62,10 +62,66 @@ class GC9A01:
             if USE_GPIOZERO:
                 # Use gpiozero (better Pi 5 compatibility)
                 print("Setting up GPIO using gpiozero...")
-                self.cs_device = DigitalOutputDevice(self.cs_pin, initial_value=True)
-                self.dc_device = DigitalOutputDevice(self.dc_pin, initial_value=False)
-                self.rst_device = DigitalOutputDevice(self.rst_pin, initial_value=True)
-                print(f"GPIO pins configured with gpiozero: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+                
+                # Try to clean up any existing GPIO usage first
+                try:
+                    # Force cleanup of GPIO pins using gpiochip
+                    import subprocess
+                    # Kill any lingering Python processes using GPIO
+                    subprocess.run(['sudo', 'pkill', '-f', 'python.*main.py'], capture_output=True)
+                    subprocess.run(['sudo', 'pkill', '-f', 'python.*test_gc9a01'], capture_output=True)
+                    time.sleep(0.5)
+                    
+                    # Try to unexport GPIO pins if they're stuck
+                    for pin in [self.cs_pin, self.dc_pin, self.rst_pin]:
+                        try:
+                            # Force release via gpiochip (Pi 5 method)
+                            subprocess.run(['gpioset', f'gpiochip4', f'{pin}=1'], 
+                                         capture_output=True, timeout=1)
+                        except:
+                            pass
+                    time.sleep(0.2)
+                except:
+                    pass
+                
+                # Create GPIO devices with multiple retry attempts
+                max_retries = 3
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Close any existing devices first
+                        for attr in ['cs_device', 'dc_device', 'rst_device']:
+                            if hasattr(self, attr):
+                                try:
+                                    getattr(self, attr).close()
+                                except:
+                                    pass
+                        
+                        # Small delay between retries
+                        if attempt > 0:
+                            print(f"Retry {attempt + 1}/{max_retries}...")
+                            time.sleep(1)
+                        
+                        # Try to create devices
+                        self.cs_device = DigitalOutputDevice(self.cs_pin, initial_value=True)
+                        self.dc_device = DigitalOutputDevice(self.dc_pin, initial_value=False)
+                        self.rst_device = DigitalOutputDevice(self.rst_pin, initial_value=True)
+                        print(f"GPIO pins configured with gpiozero: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+                        last_error = None
+                        break  # Success!
+                        
+                    except Exception as e:
+                        last_error = e
+                        if "busy" in str(e).lower():
+                            print(f"GPIO pins busy (attempt {attempt + 1}/{max_retries})")
+                        else:
+                            # Different error, don't retry
+                            raise e
+                
+                # If all retries failed, raise the error
+                if last_error:
+                    raise Exception(f"'{last_error}'. Make sure SPI/GPIO are enabled in raspi-config.")
             else:
                 # Use RPi.GPIO (fallback)
                 print("Setting up GPIO using RPi.GPIO...")
