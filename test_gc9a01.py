@@ -15,6 +15,7 @@ import time
 import RPi.GPIO as GPIO
 import spidev
 from PIL import Image, ImageDraw, ImageFont
+import os
 
 # Display configuration
 CS_PIN = 8   # GPIO 8 (CE0)
@@ -35,27 +36,58 @@ class GC9A01:
         
         # Setup GPIO with proper error handling for Pi 5
         try:
-            # Clean up any previous GPIO setup
-            GPIO.cleanup()
-            
-            # Set GPIO mode - try BCM first, fallback to BOARD
+            # Check if we're on a Pi 5
+            is_pi5 = False
             try:
+                with open('/proc/device-tree/model', 'r') as f:
+                    model = f.read().strip()
+                    if 'Pi 5' in model:
+                        is_pi5 = True
+                        print(f"Detected: {model}")
+            except:
+                pass
+            
+            # Don't cleanup at the start - this can cause issues on Pi 5
+            # GPIO.cleanup()
+            
+            # Set GPIO mode with Pi 5 workaround
+            try:
+                # Try BCM mode first
                 GPIO.setmode(GPIO.BCM)
                 print("Using GPIO.BCM mode")
             except Exception as e:
-                print(f"BCM mode failed: {e}, trying BOARD mode")
-                GPIO.setmode(GPIO.BOARD)
-                # Convert BCM pins to BOARD pins if needed
-                self.cs_pin = 24  # GPIO 8 -> Pin 24
-                self.dc_pin = 22  # GPIO 25 -> Pin 22  
-                self.rst_pin = 13 # GPIO 27 -> Pin 13
+                print(f"BCM mode failed: {e}")
+                if is_pi5:
+                    print("Pi 5 detected - trying alternative approach...")
+                    # For Pi 5, try to set the GPIO mode with warnings disabled
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        try:
+                            GPIO.setmode(GPIO.BCM)
+                            print("BCM mode succeeded with warnings suppressed")
+                        except:
+                            pass
+                
+                try:
+                    # Try BOARD mode as fallback
+                    GPIO.setmode(GPIO.BOARD)
+                    print("Using GPIO.BOARD mode")
+                    # Convert BCM pins to BOARD pins
+                    self.cs_pin = 24  # GPIO 8 -> Pin 24
+                    self.dc_pin = 22  # GPIO 25 -> Pin 22  
+                    self.rst_pin = 13 # GPIO 27 -> Pin 13
+                except Exception as e2:
+                    raise Exception(f"Both BCM and BOARD modes failed: {e}, {e2}")
             
-            # Setup GPIO pins
-            GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
-            GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
-            
-            print(f"GPIO pins configured: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+            # Setup GPIO pins with error handling
+            try:
+                GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
+                GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.LOW)
+                GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
+                print(f"GPIO pins configured: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+            except Exception as e:
+                raise Exception(f"GPIO pin setup failed: {e}. Check if pins are already in use.")
             
         except Exception as e:
             raise Exception(f"GPIO setup failed: {e}. Make sure SPI/GPIO are enabled in raspi-config.")
