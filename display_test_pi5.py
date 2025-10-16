@@ -51,9 +51,11 @@ class GC9A01_Pi5:
         # Setup SPI (SPI will control CS automatically)
         self.spi = spidev.SpiDev()
         self.spi.open(0, 0)  # Bus 0, Device 0
-        self.spi.max_speed_hz = 80000000  # 80 MHz
+        self.spi.max_speed_hz = 16000000  # 16 MHz - slower for stability
         self.spi.mode = 0
-        print(f"SPI configured: 80 MHz (hardware CS on GPIO {CS_PIN})")
+        self.spi.bits_per_word = 8
+        self.spi.lsbfirst = False
+        print(f"SPI configured: 16 MHz (hardware CS on GPIO {CS_PIN})")
         
         # Initialize display
         self._reset()
@@ -70,15 +72,16 @@ class GC9A01_Pi5:
     def _write_cmd(self, cmd):
         """Write command"""
         GPIO.output(DC_PIN, GPIO.LOW)
-        self.spi.writebytes([cmd])  # SPI handles CS automatically
+        self.spi.xfer2([cmd])  # xfer2 keeps CS low during transfer
     
     def _write_data(self, data):
         """Write data"""
         GPIO.output(DC_PIN, GPIO.HIGH)
         if isinstance(data, int):
-            self.spi.writebytes([data])  # SPI handles CS automatically
+            self.spi.writebytes([data])
         else:
-            self.spi.writebytes(data)  # SPI handles CS automatically
+            # Use writebytes for better performance with larger data
+            self.spi.writebytes(data)
     
     def _init_display(self):
         """Initialize GC9A01"""
@@ -158,9 +161,10 @@ class GC9A01_Pi5:
         # Send data
         GPIO.output(DC_PIN, GPIO.HIGH)
         
+        # Send in moderate chunks (too large = memory issues, too small = CS toggling)
         chunk_size = 4096
         for i in range(0, len(pixels), chunk_size):
-            self.spi.writebytes(pixels[i:i+chunk_size])  # SPI handles CS
+            self.spi.writebytes(pixels[i:i+chunk_size])
     
     def fill(self, color):
         """Fill screen with color (r, g, b)"""
