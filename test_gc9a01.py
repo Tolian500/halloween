@@ -63,26 +63,8 @@ class GC9A01:
                 # Use gpiozero (better Pi 5 compatibility)
                 print("Setting up GPIO using gpiozero...")
                 
-                # Try to clean up any existing GPIO usage first
-                try:
-                    # Force cleanup of GPIO pins using gpiochip
-                    import subprocess
-                    # Kill any lingering Python processes using GPIO
-                    subprocess.run(['sudo', 'pkill', '-f', 'python.*main.py'], capture_output=True)
-                    subprocess.run(['sudo', 'pkill', '-f', 'python.*test_gc9a01'], capture_output=True)
-                    time.sleep(0.5)
-                    
-                    # Try to unexport GPIO pins if they're stuck
-                    for pin in [self.cs_pin, self.dc_pin, self.rst_pin]:
-                        try:
-                            # Force release via gpiochip (Pi 5 method)
-                            subprocess.run(['gpioset', f'gpiochip4', f'{pin}=1'], 
-                                         capture_output=True, timeout=1)
-                        except:
-                            pass
-                    time.sleep(0.2)
-                except:
-                    pass
+                # Note: If you get "GPIO busy" errors, run: sudo pkill -f python
+                # This will clean up any stuck processes from previous runs
                 
                 # Create GPIO devices with multiple retry attempts
                 max_retries = 3
@@ -121,7 +103,14 @@ class GC9A01:
                 
                 # If all retries failed, raise the error
                 if last_error:
-                    raise Exception(f"'{last_error}'. Make sure SPI/GPIO are enabled in raspi-config.")
+                    if "busy" in str(last_error).lower():
+                        raise Exception(
+                            f"GPIO pins are busy after {max_retries} attempts.\n"
+                            f"Solution: Run 'sudo pkill -f python' to kill stuck processes, then try again.\n"
+                            f"Original error: {last_error}"
+                        )
+                    else:
+                        raise Exception(f"'{last_error}'. Make sure SPI/GPIO are enabled in raspi-config.")
             else:
                 # Use RPi.GPIO (fallback)
                 print("Setting up GPIO using RPi.GPIO...")
