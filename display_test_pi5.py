@@ -32,6 +32,13 @@ class GC9A01_Pi5:
     def __init__(self):
         print("Initializing GC9A01 for Raspberry Pi 5...")
         
+        # Force cleanup first to release any held pins
+        try:
+            GPIO.cleanup()
+            print("Released previously held GPIO pins")
+        except:
+            pass
+        
         # Setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
