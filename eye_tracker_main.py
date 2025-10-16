@@ -44,24 +44,27 @@ def run_eye_tracker(eye_tracker):
         # Main loop for OpenCV display (only if preview enabled)
         while eye_tracker.running and eye_tracker.enable_preview:
             try:
-                frame, faces = eye_tracker.frame_queue.get(timeout=1.0)
+                frame, motion_boxes = eye_tracker.frame_queue.get(timeout=1.0)
                 
-                # Convert to BGR for OpenCV
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                # Convert to BGR for OpenCV (handle YUV420)
+                if len(frame.shape) == 3:
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR)
+                else:
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 
-                # Draw face detection rectangles on frame
-                if faces:  # Check if not None and not empty
-                    for (x, y, w, h) in faces:
+                # Draw motion detection rectangles on frame
+                if motion_boxes:  # Check if not None and not empty
+                    for (x, y, w, h) in motion_boxes:
                         cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
                         # Draw center point
                         center_x = x + w//2
                         center_y = y + h//2
                         cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
-                        # Add face label
-                        cv2.putText(frame_bgr, 'Face', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        # Add motion label
+                        cv2.putText(frame_bgr, 'Motion', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
                 # Show at full resolution for better visibility
-                cv2.imshow('Face Detection', frame_bgr)
+                cv2.imshow('Motion Detection', frame_bgr)
                 
                 # Check for 'q' key press to quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):

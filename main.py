@@ -68,13 +68,12 @@ class EyeTracker:
         self.frame_queue = queue.Queue(maxsize=1) if enable_preview else None
         self.display_thread = None
         
-        # Face tracking variables
+        # Motion detection variables
         self.prev_frame = None
-        self.face_cascade = None
-        self.camera_width = 1640  # Full resolution for Raspberry Pi Camera v2
-        self.camera_height = 1232  # Full resolution 4:3 aspect ratio
-        self.face_detection_scale = 1.1
-        self.face_detection_min_neighbors = 3  # More sensitive
+        self.motion_threshold = 30  # Threshold for motion detection
+        self.min_motion_area = 500  # Minimum area for motion
+        self.camera_width = 320  # Good balance between quality and speed
+        self.camera_height = 240  # 4:3 aspect ratio
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
@@ -104,20 +103,19 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with full sensor resolution for face detection"""
+        """Initialize camera with optimized resolution for motion detection"""
         try:
             self.camera = Picamera2()
             
-            # Use full sensor resolution for better face detection
+            # Use optimized resolution for motion detection
             config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
+                main={"size": (self.camera_width, self.camera_height), "format": "YUV420"}
             )
             self.camera.configure(config)
             
             self.camera.start()
-            print(f"Camera: {self.camera_width}x{self.camera_height} (RGB, face detection mode)")
+            print(f"Camera: {self.camera_width}x{self.camera_height} (YUV420, motion detection mode)")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
-            print(f"Camera configured with full sensor view")
             return True
         except Exception as e:
             print(f"Camera init failed: {e}")
@@ -250,51 +248,58 @@ class EyeTracker:
         self.eye_cache[cache_key] = rgb565_bytes
         return rgb565_bytes
     
-    def detect_faces(self, frame):
-        """Detect faces in the frame using OpenCV"""
-        if self.face_cascade is None:
+    def detect_motion(self, frame):
+        """Detect motion in the frame using frame difference"""
+        # Extract Y channel from YUV420 (already grayscale!)
+        if len(frame.shape) == 3:
+            # YUV420 - extract Y channel (grayscale)
+            gray = frame[:, :, 0]  # Y channel is first
+        else:
+            # Already grayscale
+            gray = frame
+        
+        # Initialize previous frame
+        if self.prev_frame is None:
+            self.prev_frame = gray
             return []
         
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        # Calculate frame difference
+        frame_delta = cv2.absdiff(self.prev_frame, gray)
+        _, thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)
         
-        # Scale down for faster detection (but keep full res for display)
-        scale_factor = 0.5  # Scale down to 820x616 for detection
-        small_gray = cv2.resize(gray, None, fx=scale_factor, fy=scale_factor)
+        # Update previous frame
+        self.prev_frame = gray
         
-        # Detect faces with more sensitive settings
-        faces = self.face_cascade.detectMultiScale(
-            small_gray,
-            scaleFactor=1.1,
-            minNeighbors=3,
-            minSize=(15, 15),  # Smaller minimum size for scaled image
-            maxSize=(200, 200),  # Add maximum size for scaled image
-            flags=cv2.CASCADE_SCALE_IMAGE
-        )
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Scale face coordinates back up to full resolution
-        if len(faces) > 0:
-            faces = (faces / scale_factor).astype(int)
+        # Filter contours by area
+        motion_boxes = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > self.min_motion_area:
+                x, y, w, h = cv2.boundingRect(contour)
+                motion_boxes.append((x, y, w, h))
         
-        return faces
+        return motion_boxes
     
-    def update_eye_position(self, faces):
-        """Update eye position based on face detection"""
-        if faces and len(faces) > 0:
-            # Face detected!
+    def update_eye_position(self, motion_boxes):
+        """Update eye position based on motion detection"""
+        if motion_boxes and len(motion_boxes) > 0:
+            # Motion detected!
             self.last_motion_time = time.time()
             
-            # Use the largest face (closest to camera)
-            largest_face = max(faces, key=lambda f: f[2] * f[3])
-            x, y, w, h = largest_face
+            # Use the largest motion area (most significant movement)
+            largest_motion = max(motion_boxes, key=lambda m: m[2] * m[3])
+            x, y, w, h = largest_motion
             
-            # Calculate face center
-            face_center_x = x + w//2
-            face_center_y = y + h//2
+            # Calculate motion center
+            motion_center_x = x + w//2
+            motion_center_y = y + h//2
             
-            # Normalize face position (-1 to 1)
-            norm_x = (face_center_x - self.camera_width//2) / (self.camera_width//2)
-            norm_y = (face_center_y - self.camera_height//2) / (self.camera_height//2)
+            # Normalize motion position (-1 to 1)
+            norm_x = (motion_center_x - self.camera_width//2) / (self.camera_width//2)
+            norm_y = (motion_center_y - self.camera_height//2) / (self.camera_height//2)
             
             # Map to display coordinates with larger range
             eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 20)  # Inverted X
@@ -314,7 +319,7 @@ class EyeTracker:
             else:
                 self.target_eye_position = (eye_x, eye_y)
         else:
-            # No face detected - check timeout
+            # No motion detected - check timeout
             if time.time() - self.last_motion_time > self.motion_timeout:
                 # Return to center after timeout
                 self.target_eye_position = (WIDTH//2, HEIGHT//2)
@@ -356,17 +361,17 @@ class EyeTracker:
         
         print("=" * 60)
         print(f"FPS: {self.current_fps:.1f} | Frame Time: {avg_total:.1f}ms")
-        print(f"  Camera Capture:   {avg_capture:.2f}ms ({self.camera_width}x{self.camera_height} RGB)")
-        print(f"  Face Detection:   {avg_motion:.2f}ms (OpenCV Haar)")
+        print(f"  Camera Capture:   {avg_capture:.2f}ms ({self.camera_width}x{self.camera_height} YUV)")
+        print(f"  Motion Detection: {avg_motion:.2f}ms (Frame Difference)")
         print(f"  Display Update:    {avg_display:.2f}ms (full screen)")
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
         print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
-        print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (RGB888)")
-        print(f"  Face Detection:   OpenCV Haar Cascade (scaled 0.5x)")
+        print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (YUV420)")
+        print(f"  Motion Detection: Frame Difference + Contours")
         print(f"  Display Resolution: 240x240 (full resolution)")
         print(f"  Display FPS:       30 Hz")
         print(f"  SPI Speed:         100 MHz")
-        print(f"  Face Tracking:     Every frame")
+        print(f"  Motion Tracking:   Every frame")
         
         # Calculate theoretical max FPS
         theoretical_fps = 1000.0 / avg_total if avg_total > 0 else 0
@@ -390,27 +395,13 @@ class EyeTracker:
                 frame = self.camera.capture_array()
                 capture_time = (time.time() - t0) * 1000  # ms
                 
-                # Face detection (every frame for better tracking)
+                # Motion detection (every frame for better tracking)
                 t1 = time.time()
-                faces = self.detect_faces(frame)
+                motion_boxes = self.detect_motion(frame)
                 motion_time = (time.time() - t1) * 1000  # ms
                 
-                # Debug: Print face detection results occasionally
-                if hasattr(self, 'debug_counter'):
-                    self.debug_counter += 1
-                else:
-                    self.debug_counter = 1
-                
-                if self.debug_counter % 30 == 0:  # Every 30 frames (1 second at 30fps)
-                    if len(faces) > 0:
-                        print(f"Face detected! Found {len(faces)} face(s)")
-                        for i, (x, y, w, h) in enumerate(faces):
-                            print(f"  Face {i+1}: x={x}, y={y}, w={w}, h={h}")
-                    else:
-                        print("No faces detected")
-                
-                # Update eye position based on face detection
-                self.update_eye_position(faces)
+                # Update eye position based on motion detection
+                self.update_eye_position(motion_boxes)
                 
                 # Store timing
                 self.timing_capture.append(capture_time)
@@ -431,12 +422,12 @@ class EyeTracker:
                 # Add frame to queue only if preview is enabled
                 if self.enable_preview and self.frame_queue:
                     try:
-                        self.frame_queue.put_nowait((frame, faces))
+                        self.frame_queue.put_nowait((frame, motion_boxes))
                     except queue.Full:
                         # Drop oldest frame
                         try:
                             self.frame_queue.get_nowait()
-                            self.frame_queue.put_nowait((frame, faces))
+                            self.frame_queue.put_nowait((frame, motion_boxes))
                         except:
                             pass
                 
