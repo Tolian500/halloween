@@ -12,10 +12,22 @@ RST -> GPIO 27 (pin 13)
 """
 
 import time
-import RPi.GPIO as GPIO
 import spidev
 from PIL import Image, ImageDraw, ImageFont
 import os
+
+# Try gpiozero first (better Pi 5 compatibility), fallback to RPi.GPIO
+try:
+    from gpiozero import DigitalOutputDevice
+    USE_GPIOZERO = True
+    print("Using gpiozero library")
+except ImportError:
+    try:
+        import RPi.GPIO as GPIO
+        USE_GPIOZERO = False
+        print("Using RPi.GPIO library")
+    except ImportError:
+        raise ImportError("Neither gpiozero nor RPi.GPIO is available. Please install one of them.")
 
 # Display configuration
 CS_PIN = 8   # GPIO 8 (CE0)
@@ -47,47 +59,58 @@ class GC9A01:
             except:
                 pass
             
-            # Don't cleanup at the start - this can cause issues on Pi 5
-            # GPIO.cleanup()
-            
-            # Set GPIO mode with Pi 5 workaround
-            try:
-                # Try BCM mode first
-                GPIO.setmode(GPIO.BCM)
-                print("Using GPIO.BCM mode")
-            except Exception as e:
-                print(f"BCM mode failed: {e}")
-                if is_pi5:
-                    print("Pi 5 detected - trying alternative approach...")
-                    # For Pi 5, try to set the GPIO mode with warnings disabled
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        try:
-                            GPIO.setmode(GPIO.BCM)
-                            print("BCM mode succeeded with warnings suppressed")
-                        except:
-                            pass
+            if USE_GPIOZERO:
+                # Use gpiozero (better Pi 5 compatibility)
+                print("Setting up GPIO using gpiozero...")
+                self.cs_device = DigitalOutputDevice(self.cs_pin, initial_value=True)
+                self.dc_device = DigitalOutputDevice(self.dc_pin, initial_value=False)
+                self.rst_device = DigitalOutputDevice(self.rst_pin, initial_value=True)
+                print(f"GPIO pins configured with gpiozero: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+            else:
+                # Use RPi.GPIO (fallback)
+                print("Setting up GPIO using RPi.GPIO...")
                 
+                # Don't cleanup at the start - this can cause issues on Pi 5
+                # GPIO.cleanup()
+                
+                # Set GPIO mode with Pi 5 workaround
                 try:
-                    # Try BOARD mode as fallback
-                    GPIO.setmode(GPIO.BOARD)
-                    print("Using GPIO.BOARD mode")
-                    # Convert BCM pins to BOARD pins
-                    self.cs_pin = 24  # GPIO 8 -> Pin 24
-                    self.dc_pin = 22  # GPIO 25 -> Pin 22  
-                    self.rst_pin = 13 # GPIO 27 -> Pin 13
-                except Exception as e2:
-                    raise Exception(f"Both BCM and BOARD modes failed: {e}, {e2}")
-            
-            # Setup GPIO pins with error handling
-            try:
-                GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
-                GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.LOW)
-                GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
-                print(f"GPIO pins configured: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
-            except Exception as e:
-                raise Exception(f"GPIO pin setup failed: {e}. Check if pins are already in use.")
+                    # Try BCM mode first
+                    GPIO.setmode(GPIO.BCM)
+                    print("Using GPIO.BCM mode")
+                except Exception as e:
+                    print(f"BCM mode failed: {e}")
+                    if is_pi5:
+                        print("Pi 5 detected - trying alternative approach...")
+                        # For Pi 5, try to set the GPIO mode with warnings disabled
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            try:
+                                GPIO.setmode(GPIO.BCM)
+                                print("BCM mode succeeded with warnings suppressed")
+                            except:
+                                pass
+                    
+                    try:
+                        # Try BOARD mode as fallback
+                        GPIO.setmode(GPIO.BOARD)
+                        print("Using GPIO.BOARD mode")
+                        # Convert BCM pins to BOARD pins
+                        self.cs_pin = 24  # GPIO 8 -> Pin 24
+                        self.dc_pin = 22  # GPIO 25 -> Pin 22  
+                        self.rst_pin = 13 # GPIO 27 -> Pin 13
+                    except Exception as e2:
+                        raise Exception(f"Both BCM and BOARD modes failed: {e}, {e2}")
+                
+                # Setup GPIO pins with error handling
+                try:
+                    GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
+                    GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.LOW)
+                    GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
+                    print(f"GPIO pins configured: CS={self.cs_pin}, DC={self.dc_pin}, RST={self.rst_pin}")
+                except Exception as e:
+                    raise Exception(f"GPIO pin setup failed: {e}. Check if pins are already in use.")
             
         except Exception as e:
             raise Exception(f"GPIO setup failed: {e}. Make sure SPI/GPIO are enabled in raspi-config.")
@@ -103,28 +126,48 @@ class GC9A01:
     
     def _write_command(self, cmd):
         """Write command to display"""
-        GPIO.output(self.dc_pin, GPIO.LOW)  # Command mode
-        GPIO.output(self.cs_pin, GPIO.LOW)  # Select device
+        if USE_GPIOZERO:
+            self.dc_device.off()  # Command mode
+            self.cs_device.off()  # Select device
+        else:
+            GPIO.output(self.dc_pin, GPIO.LOW)  # Command mode
+            GPIO.output(self.cs_pin, GPIO.LOW)  # Select device
         self.spi.writebytes([cmd])
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        if USE_GPIOZERO:
+            self.cs_device.on()  # Deselect device
+        else:
+            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
     
     def _write_data(self, data):
         """Write data to display"""
-        GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-        GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
+        if USE_GPIOZERO:
+            self.dc_device.on()  # Data mode
+            self.cs_device.off()  # Select device
+        else:
+            GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
+            GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
         if isinstance(data, int):
             self.spi.writebytes([data])
         else:
             self.spi.writebytes(data)
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        if USE_GPIOZERO:
+            self.cs_device.on()  # Deselect device
+        else:
+            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
     
     def _init_display(self):
         """Initialize the GC9A01 display"""
         # Reset display
-        GPIO.output(self.rst_pin, GPIO.LOW)
-        time.sleep(0.01)
-        GPIO.output(self.rst_pin, GPIO.HIGH)
-        time.sleep(0.01)
+        if USE_GPIOZERO:
+            self.rst_device.off()
+            time.sleep(0.01)
+            self.rst_device.on()
+            time.sleep(0.01)
+        else:
+            GPIO.output(self.rst_pin, GPIO.LOW)
+            time.sleep(0.01)
+            GPIO.output(self.rst_pin, GPIO.HIGH)
+            time.sleep(0.01)
         
         # GC9A01 initialization sequence
         init_commands = [
@@ -214,8 +257,12 @@ class GC9A01:
             pixels.append(rgb565 & 0xFF)  # Low byte
         
         # Send data in optimized chunks for instant update
-        GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
-        GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
+        if USE_GPIOZERO:
+            self.dc_device.on()  # Data mode
+            self.cs_device.off()  # Select device
+        else:
+            GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
+            GPIO.output(self.cs_pin, GPIO.LOW)   # Select device
         
         # Use larger chunks for better performance while staying under limit
         chunk_size = 4000  # Stay under 4096 byte limit
@@ -223,15 +270,29 @@ class GC9A01:
             chunk = pixels[i:i + chunk_size]
             self.spi.writebytes(chunk)
         
-        GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
+        if USE_GPIOZERO:
+            self.cs_device.on()  # Deselect device
+        else:
+            GPIO.output(self.cs_pin, GPIO.HIGH)  # Deselect device
     
     def close(self):
         """Clean up resources"""
         # Clean up GPIO
-        try:
-            GPIO.cleanup()
-        except:
-            pass
+        if USE_GPIOZERO:
+            try:
+                if hasattr(self, 'cs_device'):
+                    self.cs_device.close()
+                if hasattr(self, 'dc_device'):
+                    self.dc_device.close()
+                if hasattr(self, 'rst_device'):
+                    self.rst_device.close()
+            except:
+                pass
+        else:
+            try:
+                GPIO.cleanup()
+            except:
+                pass
         # Close SPI
         if hasattr(self, 'spi'):
             self.spi.close()
