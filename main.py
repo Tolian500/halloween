@@ -538,15 +538,12 @@ class EyeTracker:
                     
                     # Send full screen data
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
-                    GPIO.output(self.display.cs_pin, GPIO.LOW)
                     
                     # Send data in chunks to avoid argument limit
-                    chunk_size = 2048
+                    chunk_size = 4096
                     for i in range(0, len(rgb565_bytes), chunk_size):
                         chunk = rgb565_bytes[i:i+chunk_size]
-                        self.display.spi.writebytes(chunk)
-                    
-                    GPIO.output(self.display.cs_pin, GPIO.HIGH)
+                        self.display.spi.writebytes(chunk)  # SPI handles CS automatically
                     
                     display_time = (time.time() - t0) * 1000  # ms
                     self.timing_display.append(display_time)
