@@ -39,7 +39,15 @@ class GC9A01_Pi5:
         except:
             pass
         
-        # Setup GPIO
+        # Setup SPI FIRST (before GPIO to avoid conflicts)
+        self.spi = spidev.SpiDev()
+        self.spi.open(0, 0)  # Bus 0, Device 0
+        self.spi.no_cs = True  # IMPORTANT: Disable automatic CS - must be before other settings
+        self.spi.max_speed_hz = 80000000  # 80 MHz
+        self.spi.mode = 0
+        print("SPI configured: 80 MHz (manual CS control)")
+        
+        # Now setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         
@@ -48,13 +56,6 @@ class GC9A01_Pi5:
         GPIO.setup(DC_PIN, GPIO.OUT, initial=GPIO.LOW)
         GPIO.setup(RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
         print(f"GPIO configured: CS={CS_PIN}, DC={DC_PIN}, RST={RST_PIN}")
-        
-        # Setup SPI
-        self.spi = spidev.SpiDev()
-        self.spi.open(0, 0)  # Bus 0, Device 0
-        self.spi.max_speed_hz = 80000000  # 80 MHz
-        self.spi.mode = 0
-        print("SPI configured: 80 MHz")
         
         # Initialize display
         self._reset()
