@@ -18,7 +18,7 @@ except ImportError:
     exit(1)
 
 # Display configuration
-CS_PIN = 8   # GPIO 8 (CE0)
+CS_PIN = 8   # GPIO 8 (CE0) - SPI hardware CS
 DC_PIN = 25  # GPIO 25
 RST_PIN = 27 # GPIO 27
 
@@ -39,23 +39,21 @@ class GC9A01_Pi5:
         except:
             pass
         
-        # Setup SPI FIRST (before GPIO to avoid conflicts)
-        self.spi = spidev.SpiDev()
-        self.spi.open(0, 0)  # Bus 0, Device 0
-        self.spi.no_cs = True  # IMPORTANT: Disable automatic CS - must be before other settings
-        self.spi.max_speed_hz = 80000000  # 80 MHz
-        self.spi.mode = 0
-        print("SPI configured: 80 MHz (manual CS control)")
-        
-        # Now setup GPIO
+        # Setup GPIO first (DC and RST only - CS is handled by SPI)
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         
-        # Setup pins
-        GPIO.setup(CS_PIN, GPIO.OUT, initial=GPIO.HIGH)
+        # Setup control pins (NOT CS - that's controlled by SPI hardware)
         GPIO.setup(DC_PIN, GPIO.OUT, initial=GPIO.LOW)
         GPIO.setup(RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
-        print(f"GPIO configured: CS={CS_PIN}, DC={DC_PIN}, RST={RST_PIN}")
+        print(f"GPIO configured: DC={DC_PIN}, RST={RST_PIN}")
+        
+        # Setup SPI (SPI will control CS automatically)
+        self.spi = spidev.SpiDev()
+        self.spi.open(0, 0)  # Bus 0, Device 0
+        self.spi.max_speed_hz = 80000000  # 80 MHz
+        self.spi.mode = 0
+        print(f"SPI configured: 80 MHz (hardware CS on GPIO {CS_PIN})")
         
         # Initialize display
         self._reset()
@@ -72,19 +70,15 @@ class GC9A01_Pi5:
     def _write_cmd(self, cmd):
         """Write command"""
         GPIO.output(DC_PIN, GPIO.LOW)
-        GPIO.output(CS_PIN, GPIO.LOW)
-        self.spi.writebytes([cmd])
-        GPIO.output(CS_PIN, GPIO.HIGH)
+        self.spi.writebytes([cmd])  # SPI handles CS automatically
     
     def _write_data(self, data):
         """Write data"""
         GPIO.output(DC_PIN, GPIO.HIGH)
-        GPIO.output(CS_PIN, GPIO.LOW)
         if isinstance(data, int):
-            self.spi.writebytes([data])
+            self.spi.writebytes([data])  # SPI handles CS automatically
         else:
-            self.spi.writebytes(data)
-        GPIO.output(CS_PIN, GPIO.HIGH)
+            self.spi.writebytes(data)  # SPI handles CS automatically
     
     def _init_display(self):
         """Initialize GC9A01"""
@@ -163,13 +157,10 @@ class GC9A01_Pi5:
         
         # Send data
         GPIO.output(DC_PIN, GPIO.HIGH)
-        GPIO.output(CS_PIN, GPIO.LOW)
         
         chunk_size = 4096
         for i in range(0, len(pixels), chunk_size):
-            self.spi.writebytes(pixels[i:i+chunk_size])
-        
-        GPIO.output(CS_PIN, GPIO.HIGH)
+            self.spi.writebytes(pixels[i:i+chunk_size])  # SPI handles CS
     
     def fill(self, color):
         """Fill screen with color (r, g, b)"""
