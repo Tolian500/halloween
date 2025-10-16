@@ -107,7 +107,9 @@ class GC9A01_Pi5:
             (0xB6, [0x00, 0x00]),  # Changed from 0x20 to 0x00 for stability
             
             # Memory Access Control - CRITICAL for correct orientation/colors
-            (0x36, [0x00]),  # Changed from 0x08 - try different orientations
+            # Bit 7: MY (Row order), Bit 6: MX (Column order), Bit 5: MV (Row/Column exchange)
+            # Bit 3: BGR (RGB-BGR order)
+            (0x36, [0x48]),  # MX=1, MV=1 for proper rotation
             
             # Pixel Format Set - RGB565 (16-bit)
             (0x3A, [0x55]),  # 0x55 = RGB565 for both DPI and DBI interfaces
@@ -151,11 +153,13 @@ class GC9A01_Pi5:
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Set window
-        self._write_cmd(0x2A)  # Column
-        self._write_data([0x00, 0x00, 0x00, 0xEF])  # 0-239
-        self._write_cmd(0x2B)  # Row
-        self._write_data([0x00, 0x00, 0x00, 0xEF])  # 0-239
+        # Set window - GC9A01 240x240
+        self._write_cmd(0x2A)  # Column address set
+        self._write_data([0x00, 0x00, 0x00, 0xEF])  # Start=0, End=239 (0xEF)
+        
+        self._write_cmd(0x2B)  # Row address set  
+        self._write_data([0x00, 0x00, 0x00, 0xEF])  # Start=0, End=239 (0xEF)
+        
         self._write_cmd(0x2C)  # Memory write
         
         # Convert to RGB565
@@ -193,6 +197,21 @@ def test_display():
     display = GC9A01_Pi5()
     
     try:
+        # Test 0: Border test to check alignment
+        print("\nTest 0: Border alignment test")
+        img = Image.new('RGB', (WIDTH, HEIGHT), (0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        # Draw border - white frame around edge
+        draw.rectangle((0, 0, WIDTH-1, HEIGHT-1), outline=(255, 255, 255))
+        # Draw corners - red dots
+        for x, y in [(10, 10), (WIDTH-10, 10), (10, HEIGHT-10), (WIDTH-10, HEIGHT-10)]:
+            draw.ellipse((x-5, y-5, x+5, y+5), fill=(255, 0, 0))
+        # Draw center cross
+        draw.line((WIDTH//2, 0, WIDTH//2, HEIGHT), fill=(0, 255, 0))
+        draw.line((0, HEIGHT//2, WIDTH, HEIGHT//2), fill=(0, 255, 0))
+        display.display_image(img)
+        time.sleep(3)
+        
         # Test 1: Solid colors
         print("\nTest 1: Solid colors")
         colors = [
