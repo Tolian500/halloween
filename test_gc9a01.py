@@ -140,7 +140,7 @@ class GC9A01:
         # Setup SPI
         self.spi = spidev.SpiDev()
         self.spi.open(spi_bus, spi_device)
-        self.spi.max_speed_hz = 80000000  # 80 MHz for faster updates
+        self.spi.max_speed_hz = 100000000  # 100 MHz for maximum speed
         self.spi.mode = 0
         
         # Initialize display
@@ -272,8 +272,8 @@ class GC9A01:
         else:
             GPIO.output(self.dc_pin, GPIO.HIGH)  # Data mode
         
-        # Use maximum chunk size for best performance
-        chunk_size = 8192  # Larger chunks for faster transfer
+        # Use maximum safe chunk size for best performance
+        chunk_size = 4096  # Maximum safe chunk size for SPI
         for i in range(0, len(pixels), chunk_size):
             chunk = pixels[i:i + chunk_size]
             self.spi.writebytes(chunk)  # SPI handles CS automatically

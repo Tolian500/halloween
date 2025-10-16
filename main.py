@@ -539,8 +539,8 @@ class EyeTracker:
                     # Send full screen data
                     GPIO.output(self.display.dc_pin, GPIO.HIGH)
                     
-                    # Send data in larger chunks for better performance
-                    chunk_size = 8192  # Larger chunks for faster transfer
+                    # Send data in optimized chunks (4096 is max safe size)
+                    chunk_size = 4096  # Maximum safe chunk size for SPI
                     for i in range(0, len(rgb565_bytes), chunk_size):
                         chunk = rgb565_bytes[i:i+chunk_size]
                         self.display.spi.writebytes(chunk)  # SPI handles CS automatically
