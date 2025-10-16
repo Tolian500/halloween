@@ -16,18 +16,18 @@ import spidev
 from PIL import Image, ImageDraw, ImageFont
 import os
 
-# Try gpiozero first (better Pi 5 compatibility), fallback to RPi.GPIO
+# Try RPi.GPIO first for Pi 5 (more reliable), fallback to gpiozero
 try:
-    from gpiozero import DigitalOutputDevice
-    USE_GPIOZERO = True
-    print("Using gpiozero library")
+    import RPi.GPIO as GPIO
+    USE_GPIOZERO = False
+    print("Using RPi.GPIO library")
 except ImportError:
     try:
-        import RPi.GPIO as GPIO
-        USE_GPIOZERO = False
-        print("Using RPi.GPIO library")
+        from gpiozero import DigitalOutputDevice
+        USE_GPIOZERO = True
+        print("Using gpiozero library")
     except ImportError:
-        raise ImportError("Neither gpiozero nor RPi.GPIO is available. Please install one of them.")
+        raise ImportError("Neither RPi.GPIO nor gpiozero is available. Please install one of them.")
 
 # Display configuration
 CS_PIN = 8   # GPIO 8 (CE0)
@@ -112,41 +112,20 @@ class GC9A01:
                     else:
                         raise Exception(f"'{last_error}'. Make sure SPI/GPIO are enabled in raspi-config.")
             else:
-                # Use RPi.GPIO (fallback)
+                # Use RPi.GPIO (more reliable for Pi 5)
                 print("Setting up GPIO using RPi.GPIO...")
                 
-                # Don't cleanup at the start - this can cause issues on Pi 5
-                # GPIO.cleanup()
-                
-                # Set GPIO mode with Pi 5 workaround
+                # Force cleanup to release any stuck pins
                 try:
-                    # Try BCM mode first
-                    GPIO.setmode(GPIO.BCM)
-                    print("Using GPIO.BCM mode")
-                except Exception as e:
-                    print(f"BCM mode failed: {e}")
-                    if is_pi5:
-                        print("Pi 5 detected - trying alternative approach...")
-                        # For Pi 5, try to set the GPIO mode with warnings disabled
-                        import warnings
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            try:
-                                GPIO.setmode(GPIO.BCM)
-                                print("BCM mode succeeded with warnings suppressed")
-                            except:
-                                pass
-                    
-                    try:
-                        # Try BOARD mode as fallback
-                        GPIO.setmode(GPIO.BOARD)
-                        print("Using GPIO.BOARD mode")
-                        # Convert BCM pins to BOARD pins
-                        self.cs_pin = 24  # GPIO 8 -> Pin 24
-                        self.dc_pin = 22  # GPIO 25 -> Pin 22  
-                        self.rst_pin = 13 # GPIO 27 -> Pin 13
-                    except Exception as e2:
-                        raise Exception(f"Both BCM and BOARD modes failed: {e}, {e2}")
+                    GPIO.cleanup()
+                    print("Cleaned up existing GPIO state")
+                except:
+                    pass
+                
+                # Set GPIO mode
+                GPIO.setwarnings(False)  # Disable warnings for cleaner output
+                GPIO.setmode(GPIO.BCM)
+                print("Using GPIO.BCM mode")
                 
                 # Setup GPIO pins with error handling
                 try:
