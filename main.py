@@ -71,10 +71,10 @@ class EyeTracker:
         # Face tracking variables
         self.prev_frame = None
         self.face_cascade = None
-        self.camera_width = 320  # Higher resolution for better face detection
-        self.camera_height = 240  # 4:3 aspect ratio
+        self.camera_width = 640  # Higher resolution for better face detection
+        self.camera_height = 480  # 4:3 aspect ratio
         self.face_detection_scale = 1.1
-        self.face_detection_min_neighbors = 5
+        self.face_detection_min_neighbors = 3  # More sensitive
         
         # Pre-rendered eye cache (optimization #1)
         self.eye_cache = {}
@@ -104,20 +104,20 @@ class EyeTracker:
             return False
     
     def init_camera(self):
-        """Initialize camera with higher resolution for face detection"""
+        """Initialize camera with full sensor resolution for face detection"""
         try:
             self.camera = Picamera2()
             
-            # Higher resolution for better face detection
+            # Use full sensor resolution for better face detection
             config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"},
-                lores={"size": (self.camera_width, self.camera_height), "format": "YUV420"}
+                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
             )
             self.camera.configure(config)
             
             self.camera.start()
             print(f"Camera: {self.camera_width}x{self.camera_height} (RGB, face detection mode)")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
+            print(f"Camera configured with full sensor view")
             return True
         except Exception as e:
             print(f"Camera init failed: {e}")
@@ -178,21 +178,19 @@ class EyeTracker:
         if cache_key in self.eye_cache:
             return self.eye_cache[cache_key]
         
-        # OPTIMIZATION 8: Reduce rendered image resolution (120x120 instead of 240x240)
-        # Render at half resolution then scale up - 4x faster!
-        render_size = 120
-        scale_factor = WIDTH // render_size  # 2x scale
+        # Render directly at full resolution for better quality
+        render_size = WIDTH  # 240x240 full resolution
         
-        # Create smaller image for rendering
+        # Create full resolution image for rendering
         img_array = np.zeros((render_size, render_size, 3), dtype=np.uint8)
         
-        # Scale eye position to render coordinates
-        render_x = int(eye_x // scale_factor)
-        render_y = int(eye_y // scale_factor)
+        # Use full resolution coordinates
+        render_x = int(eye_x)
+        render_y = int(eye_y)
         
-        # Smaller eye for faster display (40% size reduction)
-        iris_radius = 25  # Scaled down from 50
-        pupil_radius = 12  # Scaled down from 25
+        # Full size eye for better quality
+        iris_radius = 50  # Full size
+        pupil_radius = 25  # Full size
         
         # Calculate eye position (clamp to render bounds with margin)
         render_x = int(max(iris_radius, min(render_size - iris_radius, render_x)))
@@ -234,19 +232,13 @@ class EyeTracker:
             mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 6**2
             img_array[mask_highlight] = [255, 255, 255]  # White highlight
         
-        # Convert RGB888 to RGB565 using NumPy (10x faster than PIL!)
+        # Convert RGB888 to RGB565 using NumPy (direct conversion - no scaling needed!)
         r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
         g = (img_array[:, :, 1] >> 2).astype(np.uint16)  # 6 bits
         b = (img_array[:, :, 2] >> 3).astype(np.uint16)  # 5 bits
-        rgb565_small = (r << 11) | (g << 5) | b
+        rgb565_full = (r << 11) | (g << 5) | b
         
-        # Scale up to full resolution using NumPy broadcasting (much faster!)
-        rgb565_full = np.zeros((HEIGHT, WIDTH), dtype=np.uint16)
-        
-        # Use NumPy's repeat function for efficient scaling
-        rgb565_full = np.repeat(np.repeat(rgb565_small, scale_factor, axis=0), scale_factor, axis=1)
-        
-        # Convert to bytes (big-endian for SPI)
+        # Convert to bytes (big-endian for SPI) - no scaling needed!
         rgb565_bytes = rgb565_full.astype('>u2').tobytes()
         
         # Cache management - keep only recent entries
@@ -266,12 +258,13 @@ class EyeTracker:
         # Convert to grayscale for face detection
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         
-        # Detect faces
+        # Detect faces with more sensitive settings
         faces = self.face_cascade.detectMultiScale(
             gray,
-            scaleFactor=self.face_detection_scale,
-            minNeighbors=self.face_detection_min_neighbors,
-            minSize=(30, 30),
+            scaleFactor=1.1,
+            minNeighbors=3,
+            minSize=(20, 20),  # Smaller minimum size
+            maxSize=(300, 300),  # Add maximum size
             flags=cv2.CASCADE_SCALE_IMAGE
         )
         
@@ -361,8 +354,8 @@ class EyeTracker:
         print(f"  Other/Overhead:   {(avg_total - avg_capture - avg_motion):.2f}ms")
         print(f"  Data Transfer:     {full_screen_bytes:,} bytes (full screen)")
         print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (RGB888)")
-        print(f"  Face Detection:   OpenCV Haar Cascade")
-        print(f"  Display Resolution: 120x120 → 240x240 (2x scale)")
+        print(f"  Face Detection:   OpenCV Haar Cascade (sensitive)")
+        print(f"  Display Resolution: 240x240 (full resolution)")
         print(f"  Display FPS:       30 Hz")
         print(f"  SPI Speed:         100 MHz")
         print(f"  Face Tracking:     Every frame")
@@ -393,6 +386,20 @@ class EyeTracker:
                 t1 = time.time()
                 faces = self.detect_faces(frame)
                 motion_time = (time.time() - t1) * 1000  # ms
+                
+                # Debug: Print face detection results occasionally
+                if hasattr(self, 'debug_counter'):
+                    self.debug_counter += 1
+                else:
+                    self.debug_counter = 1
+                
+                if self.debug_counter % 30 == 0:  # Every 30 frames (1 second at 30fps)
+                    if len(faces) > 0:
+                        print(f"Face detected! Found {len(faces)} face(s)")
+                        for i, (x, y, w, h) in enumerate(faces):
+                            print(f"  Face {i+1}: x={x}, y={y}, w={w}, h={h}")
+                    else:
+                        print("No faces detected")
                 
                 # Update eye position based on face detection
                 self.update_eye_position(faces)
