@@ -316,6 +316,14 @@ class EyeTracker:
             # Reset the timer
             self.last_face_detection_time = current_time
             
+            # Reset motion timer to prevent idle animations when face is present
+            self.last_motion_time = current_time
+            
+            # If in idle mode and face detected, exit idle mode
+            if self.idle_mode:
+                print("Face detected! Exiting idle mode...")
+                self.exit_idle_mode()
+            
             # Update face size for eye sizing
             self.update_face_size(faces)
             
@@ -426,11 +434,11 @@ class EyeTracker:
     
     def get_current_eye_size(self):
         """Get current eye size based on face size"""
-        # Eye sizes range from 20 to 80 pixels radius
-        min_eye_size = 20
+        # Eye sizes range from 40 to 80 pixels radius (smallest size doubled)
+        min_eye_size = 40
         max_eye_size = 80
         
-        # Map index (0-19) to eye size (20-80)
+        # Map index (0-29) to eye size (40-80)
         size_ratio = self.current_eye_size_index / (self.total_eye_sizes - 1)
         current_size = min_eye_size + (max_eye_size - min_eye_size) * size_ratio
         
@@ -611,6 +619,10 @@ class EyeTracker:
         if self.idle_mode:
             return  # Already in idle mode
         
+        # Don't trigger idle animations if face is detected
+        if self.face_detected:
+            return  # Face is present, don't go idle
+        
         # Check if enough time has passed without motion
         time_since_motion = current_time - self.last_motion_time
         
@@ -676,6 +688,9 @@ class EyeTracker:
         if int(time.time()) != getattr(self, '_last_idle_debug', -1):
             self._last_idle_debug = int(time.time())
             print(f"Idle animation positions: Left={left_pos}, Right={right_pos}")
+            # Also print blink states for debugging
+            if hasattr(self.idle_animations, 'left_blink_state'):
+                print(f"Blink states: Left={self.left_blink_state:.2f}, Right={self.right_blink_state:.2f}")
         
         # Update target positions
         self.target_left_eye = left_pos
@@ -686,6 +701,10 @@ class EyeTracker:
             # Override normal blinking with animation-specific blinking
             self.left_blink_state = self.idle_animations.left_blink_state
             self.right_blink_state = self.idle_animations.right_blink_state
+        else:
+            # Ensure blink states are always defined
+            self.left_blink_state = 1.0
+            self.right_blink_state = 1.0
     
     def update_fps(self):
         """Update FPS counter"""
@@ -865,13 +884,24 @@ class EyeTracker:
         right_eye_x, right_eye_y = self.current_right_eye
         
         # Check if we need to update (optimization)
-        left_rounded_pos = (round(left_eye_x / 5) * 5, round(left_eye_y / 5) * 5, round(self.blink_state * 10) / 10)
-        right_rounded_pos = (round(right_eye_x / 5) * 5, round(right_eye_y / 5) * 5, round(self.blink_state * 10) / 10)
+        # Use individual blink states for idle animations, main blink state otherwise
+        left_blink_for_cache = self.left_blink_state if self.idle_mode else self.blink_state
+        right_blink_for_cache = self.right_blink_state if self.idle_mode else self.blink_state
+        
+        left_rounded_pos = (round(left_eye_x / 5) * 5, round(left_eye_y / 5) * 5, round(left_blink_for_cache * 10) / 10)
+        right_rounded_pos = (round(right_eye_x / 5) * 5, round(right_eye_y / 5) * 5, round(right_blink_for_cache * 10) / 10)
         
         # Check if positions changed significantly
         left_changed = left_rounded_pos != self.last_rendered_pos_left
         right_changed = right_rounded_pos != self.last_rendered_pos_right
-        blink_changed = self.is_blinking and (self.blink_state != getattr(self, 'last_blink_state', 1.0))
+        
+        # Check for blink changes - use individual states for idle mode
+        if self.idle_mode:
+            left_blink_changed = (self.left_blink_state != getattr(self, 'last_left_blink_state', 1.0))
+            right_blink_changed = (self.right_blink_state != getattr(self, 'last_right_blink_state', 1.0))
+            blink_changed = left_blink_changed or right_blink_changed
+        else:
+            blink_changed = self.is_blinking and (self.blink_state != getattr(self, 'last_blink_state', 1.0))
         
         if left_changed or blink_changed:
             t0 = time.time()
@@ -910,7 +940,12 @@ class EyeTracker:
         if left_changed or right_changed or blink_changed:
             display_time = (time.time() - t0) * 1000  # ms
             self.timing_display.append(display_time)
-            self.last_blink_state = self.blink_state
+            # Store blink states for next comparison
+            if self.idle_mode:
+                self.last_left_blink_state = self.left_blink_state
+                self.last_right_blink_state = self.right_blink_state
+            else:
+                self.last_blink_state = self.blink_state
     
     def _send_to_display(self, display, rgb565_bytes):
         """Send RGB565 data to a specific display"""

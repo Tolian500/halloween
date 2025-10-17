@@ -36,6 +36,10 @@ class IdleAnimations:
         # Eye color (same as main.py idle color)
         self.eye_color = [255, 255, 0]  # Yellow (idle color)
         
+        # Initialize blink states (always start with eyes open)
+        self.left_blink_state = 1.0
+        self.right_blink_state = 1.0
+        
         # Smoothing variables to reduce shaking
         self.left_target_pos = (WIDTH//2, HEIGHT//2)
         self.right_target_pos = (WIDTH//2, HEIGHT//2)
@@ -78,7 +82,8 @@ class IdleAnimations:
         new_left_x = current_left_x + (target_left_x - current_left_x) * self.movement_speed
         new_left_y = current_left_y + (target_left_y - current_left_y) * self.movement_speed
         
-        self.left_eye_pos = (new_left_x, new_left_y)
+        # Round to 1 decimal place to reduce floating point precision issues
+        self.left_eye_pos = (round(new_left_x, 1), round(new_left_y, 1))
         
         # Smooth right eye movement
         current_right_x, current_right_y = self.right_eye_pos
@@ -87,7 +92,8 @@ class IdleAnimations:
         new_right_x = current_right_x + (target_right_x - current_right_x) * self.movement_speed
         new_right_y = current_right_y + (target_right_y - current_right_y) * self.movement_speed
         
-        self.right_eye_pos = (new_right_x, new_right_y)
+        # Round to 1 decimal place to reduce floating point precision issues
+        self.right_eye_pos = (round(new_right_x, 1), round(new_right_y, 1))
     
     def animation_1_rolling_orbit(self, t):
         """Rolling eyes around orbit - smooth circular motion"""
@@ -218,9 +224,9 @@ class IdleAnimations:
     
     def animation_4_blinking(self, t):
         """Separate eye blinking: close right eye, then left eye, 2 cycles"""
-        # Animation parameters
-        blink_duration = 0.25  # Time to close/open each eye (2x faster)
-        hold_duration = 0.15  # Time to hold eye closed (2x faster)
+        # Animation parameters - slower for better visibility
+        blink_duration = 0.3  # Time to close/open each eye
+        hold_duration = 0.2   # Time to hold eye closed
         cycles = 2  # Do exactly 2 cycles
         
         # Calculate cycle time (right blink + left blink)
@@ -235,6 +241,9 @@ class IdleAnimations:
             center_x, center_y = WIDTH//2, HEIGHT//2
             self.left_target_pos = (center_x, center_y)
             self.right_target_pos = (center_x, center_y)
+            # Reset blink states to open
+            self.left_blink_state = 1.0
+            self.right_blink_state = 1.0
             return self.left_target_pos, self.right_target_pos
         
         # Calculate which cycle we're in and position within cycle
@@ -279,9 +288,14 @@ class IdleAnimations:
         self.left_target_pos = (center_x, center_y)
         self.right_target_pos = (center_x, center_y)
         
-        # Store blink states for rendering
+        # Store blink states for rendering - ensure they're always set
         self.left_blink_state = left_blink_state
         self.right_blink_state = right_blink_state
+        
+        # Debug output for blinking animation
+        if int(t * 10) != getattr(self, '_last_blink_debug', -1):
+            self._last_blink_debug = int(t * 10)
+            print(f"Blink animation: t={t:.2f}, Left={left_blink_state:.2f}, Right={right_blink_state:.2f}")
         
         return self.left_target_pos, self.right_target_pos
     
@@ -332,10 +346,37 @@ class IdleAnimations:
     
     def animation_6_sleeping_eyes(self, t):
         """Slow closing eyes like sleeping"""
+        # Animation parameters
+        sleep_duration = 3.0  # Total time for sleep animation
+        
         # Eyes stay centered
         center_x, center_y = WIDTH//2, HEIGHT//2
         self.left_target_pos = (center_x, center_y)
         self.right_target_pos = (center_x, center_y)
+        
+        # Calculate sleep progress (0.0 to 1.0)
+        sleep_progress = min(t / sleep_duration, 1.0)
+        
+        # Calculate blink state based on sleep progress
+        if sleep_progress < 0.3:
+            # First 30% - eyes fully open
+            blink_state = 1.0
+        elif sleep_progress < 0.7:
+            # Middle 40% - gradually closing
+            close_progress = (sleep_progress - 0.3) / 0.4  # 0.0 to 1.0
+            blink_state = 1.0 - close_progress  # 1.0 to 0.0
+        else:
+            # Last 30% - eyes closed
+            blink_state = 0.0
+        
+        # Set blink states for both eyes (synchronized)
+        self.left_blink_state = blink_state
+        self.right_blink_state = blink_state
+        
+        # Debug output for sleeping animation
+        if int(t * 5) != getattr(self, '_last_sleep_debug', -1):
+            self._last_sleep_debug = int(t * 5)
+            print(f"Sleep animation: t={t:.2f}, Progress={sleep_progress:.2f}, Blink={blink_state:.2f}")
         
         return self.left_target_pos, self.right_target_pos
     
@@ -434,7 +475,27 @@ class IdleAnimations:
         """Start a random animation"""
         self.current_animation = random.randint(0, 6)  # 0-6 for 7 animations
         self.animation_start_time = time.time()
+        
+        # Reset animation-specific state variables
+        self._reset_animation_state()
+        
         print(f"Starting random animation: {self.get_animation_name(self.current_animation)}")
+    
+    def _reset_animation_state(self):
+        """Reset animation-specific state variables"""
+        # Reset blink states to open
+        self.left_blink_state = 1.0
+        self.right_blink_state = 1.0
+        
+        # Reset animation-specific variables
+        if hasattr(self, '_animation3_half'):
+            delattr(self, '_animation3_half')
+        
+        # Reset debug counters
+        if hasattr(self, '_last_blink_debug'):
+            delattr(self, '_last_blink_debug')
+        if hasattr(self, '_last_sleep_debug'):
+            delattr(self, '_last_sleep_debug')
     
     def update(self):
         """Update the current animation"""
@@ -454,7 +515,8 @@ class IdleAnimations:
         # Debug: print positions occasionally
         if int(time.time()) != getattr(self, '_last_anim_debug', -1):
             self._last_anim_debug = int(time.time())
-            print(f"Animation {self.current_animation + 1} positions: Left={self.left_eye_pos}, Right={self.right_eye_pos}")
+            anim_name = self.get_animation_name(self.current_animation)
+            print(f"Animation {self.current_animation + 1} ({anim_name}) positions: Left={self.left_eye_pos}, Right={self.right_eye_pos}")
         
         # Don't render directly - let main system handle rendering
     
@@ -464,6 +526,11 @@ class IdleAnimations:
     
     def get_animation_positions(self, t):
         """Get positions for current animation"""
+        # Ensure blink states are always initialized for non-blinking/sleeping animations
+        if self.current_animation != 3 and self.current_animation != 5:  # Not blinking or sleeping animation
+            self.left_blink_state = 1.0
+            self.right_blink_state = 1.0
+        
         if self.current_animation == 0:
             return self.animation_1_rolling_orbit(t)
         elif self.current_animation == 1:
