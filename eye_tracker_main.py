@@ -44,7 +44,7 @@ def run_eye_tracker(eye_tracker):
         # Main loop for OpenCV display (only if preview enabled)
         while eye_tracker.running and eye_tracker.enable_preview:
             try:
-                frame, motion_boxes = eye_tracker.frame_queue.get(timeout=1.0)
+                frame, motion_boxes, faces = eye_tracker.frame_queue.get(timeout=1.0)
                 
                 # Convert to BGR for OpenCV (handle YUV420)
                 if len(frame.shape) == 3:
@@ -62,6 +62,22 @@ def run_eye_tracker(eye_tracker):
                         cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 0, 255), -1)
                         # Add motion label
                         cv2.putText(frame_bgr, 'Motion', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                # Draw face detection rectangles on frame
+                if faces:  # Check if not None and not empty
+                    for (x, y, w, h) in faces:
+                        cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 165, 255), 2)  # Orange color
+                        # Draw center point
+                        center_x = x + w//2
+                        center_y = y + h//2
+                        cv2.circle(frame_bgr, (center_x, center_y), 5, (0, 165, 255), -1)  # Orange color
+                        # Add face label
+                        cv2.putText(frame_bgr, 'Face', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+                
+                # Add mode indicator
+                mode_text = "Face Tracking" if eye_tracker.face_tracking_mode else "Motion Detection"
+                mode_color = (0, 165, 255) if eye_tracker.face_tracking_mode else (0, 255, 0)
+                cv2.putText(frame_bgr, mode_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
                 
                 # Show at full resolution for better visibility
                 cv2.imshow('Motion Detection', frame_bgr)

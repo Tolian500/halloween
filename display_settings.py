@@ -184,13 +184,18 @@ class GC9A01:
         if hasattr(self, 'spi'):
             self.spi.close()
 
-def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50):
+def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50, eye_color=None):
     """Create eye image with blinking support + RGB565 pre-conversion"""
+    # Default eye color if not provided
+    if eye_color is None:
+        eye_color = [200, 50, 25]  # Red
+    
     # Round to nearest 5 pixels for smoother movement (still good caching)
     cache_x = round(eye_x / 5) * 5
     cache_y = round(eye_y / 5) * 5
     blink_key = round(blink_state * 10) / 10  # Cache different blink states
-    cache_key = (cache_x, cache_y, blink_key)
+    color_key = tuple(eye_color)  # Add color to cache key
+    cache_key = (cache_x, cache_y, blink_key, color_key)
     
     # Check cache first (cache stores RGB565 bytes directly!)
     if cache_key in eye_cache:
@@ -224,9 +229,9 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
         
         # Only draw eye in visible area
         if eyelid_bottom > eyelid_top:
-            # Draw iris (red circle) with blink mask
+            # Draw iris with blink mask
             mask_iris = ((x - render_x)**2 + (y - render_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
-            img_array[mask_iris] = [200, 50, 25]  # Red iris
+            img_array[mask_iris] = eye_color  # Dynamic eye color
             
             # Draw pupil (black circle) with blink mask
             mask_pupil = ((x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
@@ -240,7 +245,7 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
     else:
         # Fully open eye
         mask_iris = (x - render_x)**2 + (y - render_y)**2 <= iris_radius**2
-        img_array[mask_iris] = [200, 50, 25]  # Red iris
+        img_array[mask_iris] = eye_color  # Dynamic eye color
         
         mask_pupil = (x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2
         img_array[mask_pupil] = [0, 0, 0]  # Black pupil
