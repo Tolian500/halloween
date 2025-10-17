@@ -75,12 +75,19 @@ class EyeTracker:
         self.face_tracking_timeout = 5.0  # Stop face tracking after 5 seconds of no face
         self.last_face_time = time.time()
         
+        # Motion detection variables
+        self.prev_frame = None
+        self.motion_threshold = 30  # Threshold for motion detection
+        self.min_motion_area = 100  # Larger minimum area for higher resolution
+        self.camera_width = 800
+        self.camera_height = 600  
+        
         # Eye color system
         self.base_eye_color = [200, 50, 25]  # Red (motion detection)
         self.face_eye_color = [255, 165, 0]  # Orange (face tracking)
         self.current_eye_color = self.base_eye_color.copy()
         self.color_transition_speed = 0.05  # How fast colors change
-        self.target_eye_color = self.base_eye_color.copy()  
+        self.target_eye_color = self.base_eye_color.copy()
         
         # Pre-rendered eye cache (optimization #1) - separate for each eye
         self.eye_cache_left = {}
