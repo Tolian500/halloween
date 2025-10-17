@@ -15,6 +15,9 @@ from display_settings import (
     WIDTH, HEIGHT, create_eye_image, send_to_display
 )
 
+# Import idle animations
+from idle_animations import IdleAnimations
+
 class EyeTracker:
     def __init__(self, enable_preview=True):
         self.display1 = None  # Left eye display
@@ -48,6 +51,10 @@ class EyeTracker:
         self.last_blink_time = time.time()
         self.next_blink_delay = np.random.uniform(3, 8)  # Random blink every 3-8 seconds (more realistic)
         
+        # Separate blink states for idle animations
+        self.left_blink_state = 1.0  # 1.0 = open, 0.0 = closed
+        self.right_blink_state = 1.0  # 1.0 = open, 0.0 = closed
+        
         # Performance monitoring
         self.frame_count = 0
         self.last_fps_time = time.time()
@@ -80,6 +87,14 @@ class EyeTracker:
         self.last_face_following_time = time.time()
         self.current_face_center = None
         self.last_motion_time = time.time()  # Track last motion for interruption
+        
+        # Idle animation system
+        self.idle_animations = None
+        self.idle_mode = False
+        self.idle_start_time = None
+        self.idle_trigger_delay = np.random.uniform(5, 10)  # 5-10 seconds for testing
+        self.idle_resume_delay = np.random.uniform(5, 10)  # 5-10 seconds delay before resuming
+        self.idle_animation_started = False
         
         # Dynamic eye sizing based on face size with smooth animation
         self.face_sizes = []  # Store last 5 face sizes
@@ -152,6 +167,12 @@ class EyeTracker:
             self._test_displays()
             
             print("Both GC9A01 displays initialized successfully!")
+            
+            # Initialize idle animations
+            print("Initializing idle animations...")
+            self.idle_animations = IdleAnimations()
+            print("Idle animations initialized successfully!")
+            
             return True
         except Exception as e:
             print(f"Failed to initialize displays: {e}")
@@ -470,6 +491,11 @@ class EyeTracker:
                 print("Motion detected! Exiting face-following mode...")
                 self.face_following_mode = False
                 self.current_face_center = None
+            
+            # If in idle mode and motion detected, exit idle mode
+            if self.idle_mode:
+                print("Motion detected! Exiting idle mode...")
+                self.exit_idle_mode()
         
         # Check if face-following mode should timeout
         if self.face_following_mode:
@@ -478,8 +504,14 @@ class EyeTracker:
                 self.face_following_mode = False
                 self.current_face_center = None
         
+        # Check for idle animation trigger
+        self.check_idle_animation_trigger(current_time)
+        
         # Choose positioning method based on mode
-        if self.face_following_mode and self.current_face_center:
+        if self.idle_mode:
+            # Idle animation mode - let idle animations handle positioning
+            return
+        elif self.face_following_mode and self.current_face_center:
             # Face-following mode - use face position
             eye_x, eye_y = self.get_eye_position_from_face(self.current_face_center)
             
@@ -571,6 +603,87 @@ class EyeTracker:
         
         # Keep backward compatibility
         self.current_eye_position = self.current_left_eye
+    
+    def check_idle_animation_trigger(self, current_time):
+        """Check if idle animation should be triggered"""
+        if self.idle_mode:
+            return  # Already in idle mode
+        
+        # Check if enough time has passed without motion
+        time_since_motion = current_time - self.last_motion_time
+        
+        if time_since_motion >= self.idle_trigger_delay:
+            print(f"No motion for {time_since_motion:.1f}s. Starting idle animation...")
+            self.start_idle_mode()
+    
+    def start_idle_mode(self):
+        """Start idle animation mode"""
+        if self.idle_animations is None:
+            return
+        
+        self.idle_mode = True
+        self.idle_start_time = time.time()
+        self.idle_animation_started = False
+        
+        # Generate new random delays for next time
+        self.idle_trigger_delay = np.random.uniform(5, 10)  # 5-10 seconds for testing
+        self.idle_resume_delay = np.random.uniform(5, 10)  # 5-10 seconds delay before resuming
+        
+        print(f"Idle mode started. Will resume tracking after {self.idle_resume_delay:.1f}s")
+    
+    def exit_idle_mode(self):
+        """Exit idle animation mode"""
+        self.idle_mode = False
+        self.idle_start_time = None
+        self.idle_animation_started = False
+        
+        # Reset eye positions to center
+        center_pos = (WIDTH//2, HEIGHT//2)
+        self.target_eye_position = center_pos
+        self.target_left_eye = center_pos
+        self.target_right_eye = center_pos
+        self.motion_history.clear()
+        
+        print("Exited idle mode. Returning to motion tracking...")
+    
+    def update_idle_animation(self):
+        """Update idle animation if in idle mode"""
+        if not self.idle_mode or self.idle_animations is None:
+            return
+        
+        current_time = time.time()
+        
+        # Check if animation should end
+        if current_time - self.idle_start_time >= self.idle_resume_delay:
+            print("Idle animation timeout. Resuming motion tracking...")
+            self.exit_idle_mode()
+            return
+        
+        # Start animation if not started yet
+        if not self.idle_animation_started:
+            self.idle_animations.start_random_animation()
+            self.idle_animation_started = True
+        
+        # Update animation
+        self.idle_animations.update()
+        
+        # Get animation positions
+        left_pos, right_pos = self.idle_animations.get_current_positions()
+        
+        # Debug: print positions occasionally
+        if int(time.time()) != getattr(self, '_last_idle_debug', -1):
+            self._last_idle_debug = int(time.time())
+            print(f"Idle animation positions: Left={left_pos}, Right={right_pos}")
+        
+        # Update target positions
+        self.target_left_eye = left_pos
+        self.target_right_eye = right_pos
+        
+        # Handle special blink states from idle animations (animation 4)
+        if hasattr(self.idle_animations, 'left_blink_state') and hasattr(self.idle_animations, 'right_blink_state'):
+            # Override normal blinking with animation-specific blinking
+            self.left_blink_state = self.idle_animations.left_blink_state
+            self.right_blink_state = self.idle_animations.right_blink_state
     
     def update_fps(self):
         """Update FPS counter"""
@@ -697,6 +810,9 @@ class EyeTracker:
                 # Smooth eye movement
                 self.smooth_eye_movement()
                 
+                # Update idle animation if in idle mode
+                self.update_idle_animation()
+                
                 # Smooth eye size animation
                 self.update_eye_size_smoothly()
                 
@@ -758,8 +874,14 @@ class EyeTracker:
         if left_changed or blink_changed:
             t0 = time.time()
             
+            # Use separate blink states if in idle mode
+            if self.idle_mode and hasattr(self, 'left_blink_state'):
+                left_blink_value = self.left_blink_state
+            else:
+                left_blink_value = self.blink_state
+            
             # Generate left eye image
-            rgb565_bytes_left = self.create_eye_image(int(left_eye_x), int(left_eye_y), self.blink_state, self.eye_cache_left)
+            rgb565_bytes_left = self.create_eye_image(int(left_eye_x), int(left_eye_y), left_blink_value, self.eye_cache_left)
             
             # Update left display
             self._send_to_display(self.display1, rgb565_bytes_left)
@@ -769,8 +891,14 @@ class EyeTracker:
         if right_changed or blink_changed:
             t0 = time.time()
             
+            # Use separate blink states if in idle mode
+            if self.idle_mode and hasattr(self, 'right_blink_state'):
+                right_blink_value = self.right_blink_state
+            else:
+                right_blink_value = self.blink_state
+            
             # Generate right eye image
-            rgb565_bytes_right = self.create_eye_image(int(right_eye_x), int(right_eye_y), self.blink_state, self.eye_cache_right)
+            rgb565_bytes_right = self.create_eye_image(int(right_eye_x), int(right_eye_y), right_blink_value, self.eye_cache_right)
             
             # Update right display
             self._send_to_display(self.display2, rgb565_bytes_right)

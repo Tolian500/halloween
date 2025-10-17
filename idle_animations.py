@@ -15,10 +15,7 @@ class IdleAnimations:
         self.animation_start_time = time.time()
         self.animation_duration = 5.0  # Each animation runs for 10 seconds
         
-        # Initialize displays
-        print("Initializing displays...")
-        self.left_display = GC9A01(spi_bus=0, spi_device=0, cs_pin=8, dc_pin=25, rst_pin=27)
-        self.right_display = GC9A01(spi_bus=0, spi_device=1, cs_pin=7, dc_pin=24, rst_pin=23)
+        # Don't initialize displays - main system handles that
         
         # Animation parameters
         self.orbit_radius = 80  # Large radius to move eyes near screen edge
@@ -114,7 +111,7 @@ class IdleAnimations:
         self.left_target_pos = (left_x, left_y)
         self.right_target_pos = (right_x, right_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_2_horizontal_scan(self, t):
         """Horizontal scanning from edge to edge with holds"""
@@ -154,7 +151,7 @@ class IdleAnimations:
         self.left_target_pos = (left_x, left_y)
         self.right_target_pos = (right_x, right_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_3_vertical_scan_random_x(self, t):
         """Vertical scanning: left or right half, 3 up-down cycles"""
@@ -174,7 +171,7 @@ class IdleAnimations:
             center_x, center_y = WIDTH//2, HEIGHT//2
             self.left_target_pos = (center_x, center_y)
             self.right_target_pos = (center_x, center_y)
-            return self.left_eye_pos, self.right_eye_pos
+            return self.left_target_pos, self.right_target_pos
         
         # Pick left or right half (set once at start of animation)
         if not hasattr(self, '_animation3_half'):
@@ -217,7 +214,7 @@ class IdleAnimations:
         self.left_target_pos = (left_x, left_y)
         self.right_target_pos = (right_x, right_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_4_blinking(self, t):
         """Separate eye blinking: close right eye, then left eye, 2 cycles"""
@@ -238,7 +235,7 @@ class IdleAnimations:
             center_x, center_y = WIDTH//2, HEIGHT//2
             self.left_target_pos = (center_x, center_y)
             self.right_target_pos = (center_x, center_y)
-            return self.left_eye_pos, self.right_eye_pos
+            return self.left_target_pos, self.right_target_pos
         
         # Calculate which cycle we're in and position within cycle
         cycle_num = int(t / cycle_time)
@@ -286,7 +283,7 @@ class IdleAnimations:
         self.left_blink_state = left_blink_state
         self.right_blink_state = right_blink_state
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_5_hate_eyes(self, t):
         """Hate eyes rolling to top-side edge and holding"""
@@ -302,7 +299,7 @@ class IdleAnimations:
             center_x, center_y = WIDTH//2, HEIGHT//2
             self.left_target_pos = (center_x, center_y)
             self.right_target_pos = (center_x, center_y)
-            return self.left_eye_pos, self.right_eye_pos
+            return self.left_target_pos, self.right_target_pos
         
         center_x, center_y = WIDTH//2, HEIGHT//2
         
@@ -331,7 +328,7 @@ class IdleAnimations:
         self.left_target_pos = (left_x, left_y)
         self.right_target_pos = (right_x, right_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_6_sleeping_eyes(self, t):
         """Slow closing eyes like sleeping"""
@@ -340,7 +337,7 @@ class IdleAnimations:
         self.left_target_pos = (center_x, center_y)
         self.right_target_pos = (center_x, center_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def animation_7_arch_movement(self, t):
         """Arch movement: 2 full cycles closer to edges, faster movement, longer holds on sides"""
@@ -363,7 +360,7 @@ class IdleAnimations:
             center_x, center_y = WIDTH//2, HEIGHT//2
             self.left_target_pos = (center_x, center_y)
             self.right_target_pos = (center_x, center_y)
-            return self.left_eye_pos, self.right_eye_pos
+            return self.left_target_pos, self.right_target_pos
         
         center_x, center_y = WIDTH//2, HEIGHT//2
         
@@ -406,7 +403,7 @@ class IdleAnimations:
         self.left_target_pos = (left_x, left_y)
         self.right_target_pos = (right_x, right_y)
         
-        return self.left_eye_pos, self.right_eye_pos
+        return self.left_target_pos, self.right_target_pos
     
     def should_blink(self, current_time):
         """Check if eyes should blink"""
@@ -431,62 +428,58 @@ class IdleAnimations:
         self.is_blinking = True
         self.blink_start_time = current_time
     
-    def render_eyes(self, left_pos, right_pos, blink_state=False, sleep_state=False):
-        """Render eyes at given positions"""
-        try:
-            # Frame skipping to prevent overlapping
-            self.frame_skip_counter += 1
-            if self.frame_skip_counter < self.frame_skip_interval:
-                return True  # Skip this frame
-            
-            self.frame_skip_counter = 0  # Reset counter
-            
-            # Clamp positions to valid display bounds
-            left_x = max(40, min(WIDTH - 40, left_pos[0]))
-            left_y = max(40, min(HEIGHT - 40, left_pos[1]))
-            right_x = max(40, min(WIDTH - 40, right_pos[0]))
-            right_y = max(40, min(HEIGHT - 40, right_pos[1]))
-            
-            # Determine iris radius based on state
-            iris_radius = 40
-            if blink_state:
-                iris_radius = 2  # Almost closed
-            elif sleep_state:
-                iris_radius = 15  # Half closed
-            
-            # Create eye images
-            # Check if we have separate blink states (animation 4)
-            if hasattr(self, 'left_blink_state') and hasattr(self, 'right_blink_state'):
-                left_blink_value = self.left_blink_state
-                right_blink_value = self.right_blink_state
-            else:
-                # Use normal blink state for both eyes
-                blink_value = 0.0 if blink_state else 1.0
-                left_blink_value = blink_value
-                right_blink_value = blink_value
-            
-            # Debug: print color being used
-            if int(time.time()) != getattr(self, '_last_color_debug', -1):
-                self._last_color_debug = int(time.time())
-                print(f"Using eye color: {self.eye_color}")
-            
-            left_eye_bytes = create_eye_image(left_x, left_y, left_blink_value, {}, 50, self.eye_color, iris_radius)
-            right_eye_bytes = create_eye_image(right_x, right_y, right_blink_value, {}, 50, self.eye_color, iris_radius)
-            
-            # Check if eye creation was successful
-            if left_eye_bytes is None or right_eye_bytes is None:
-                print(f"Eye creation failed - positions: L({left_x},{left_y}) R({right_x},{right_y})")
-                return False
-            
-            # Send to displays
-            send_to_display(self.left_display, left_eye_bytes)
-            send_to_display(self.right_display, right_eye_bytes)
-            
-            return True
-            
-        except Exception as e:
-            print(f"Render error: {e}")
-            return False
+    # render_eyes method removed - main system handles rendering
+    
+    def start_random_animation(self):
+        """Start a random animation"""
+        self.current_animation = random.randint(0, 6)  # 0-6 for 7 animations
+        self.animation_start_time = time.time()
+        print(f"Starting random animation: {self.get_animation_name(self.current_animation)}")
+    
+    def update(self):
+        """Update the current animation"""
+        current_time = time.time()
+        elapsed_time = current_time - self.animation_start_time
+        
+        # Get animation positions
+        left_pos, right_pos = self.get_animation_positions(elapsed_time)
+        
+        # Update target positions for smooth movement
+        self.left_target_pos = left_pos
+        self.right_target_pos = right_pos
+        
+        # Smooth movement
+        self.smooth_eye_movement()
+        
+        # Debug: print positions occasionally
+        if int(time.time()) != getattr(self, '_last_anim_debug', -1):
+            self._last_anim_debug = int(time.time())
+            print(f"Animation {self.current_animation + 1} positions: Left={self.left_eye_pos}, Right={self.right_eye_pos}")
+        
+        # Don't render directly - let main system handle rendering
+    
+    def get_current_positions(self):
+        """Get current eye positions (smoothed)"""
+        return self.left_eye_pos, self.right_eye_pos
+    
+    def get_animation_positions(self, t):
+        """Get positions for current animation"""
+        if self.current_animation == 0:
+            return self.animation_1_rolling_orbit(t)
+        elif self.current_animation == 1:
+            return self.animation_2_horizontal_scan(t)
+        elif self.current_animation == 2:
+            return self.animation_3_vertical_scan_random_x(t)
+        elif self.current_animation == 3:
+            return self.animation_4_blinking(t)
+        elif self.current_animation == 4:
+            return self.animation_5_hate_eyes(t)
+        elif self.current_animation == 5:
+            return self.animation_6_sleeping_eyes(t)
+        elif self.current_animation == 6:
+            return self.animation_7_arch_movement(t)
+        else:
+            return self.animation_1_rolling_orbit(t)
     
     def run_animation_test(self):
         """Run the animation test"""
