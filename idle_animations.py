@@ -93,11 +93,16 @@ class IdleAnimations:
         self.right_eye_pos = (new_right_x, new_right_y)
     
     def animation_1_rolling_orbit(self, t):
-        """Rolling eyes around orbit"""
-        # Circular motion around center - slower and smoother
-        angle = t * 0.5 * math.pi  # Full circle every 4 seconds (much slower)
-        offset_x = self.orbit_radius * math.cos(angle)
-        offset_y = self.orbit_radius * math.sin(angle)
+        """Rolling eyes around orbit - smooth circular motion"""
+        # Animation parameters
+        orbit_radius = 80  # Large radius to move eyes near screen edge
+        
+        # Simple smooth circular motion
+        angle = t * 0.5 * math.pi  # Slow, smooth rotation
+        
+        # Calculate position
+        offset_x = orbit_radius * math.cos(angle)
+        offset_y = orbit_radius * math.sin(angle)
         
         center_x, center_y = WIDTH//2, HEIGHT//2
         left_x = center_x + offset_x
@@ -338,12 +343,19 @@ class IdleAnimations:
         return self.left_eye_pos, self.right_eye_pos
     
     def animation_7_arch_movement(self, t):
-        """Arch movement: 2 full cycles on top half of screen, then return"""
+        """Arch movement: 2 full cycles closer to edges, faster movement, longer holds on sides"""
         # Animation parameters
-        arch_radius = 60  # Radius for the arch movement
-        arch_duration = 4.0  # Time for 2 full cycles (2 seconds per cycle)
-        return_duration = 1.0  # Time to return to center
-        total_duration = arch_duration + return_duration
+        arch_radius = 100  # Much closer to edges (was 60)
+        side_hold_time = 0.8  # Hold longer on sides
+        move_time = 0.2  # Faster movement between positions
+        cycles = 2  # 2 full cycles
+        
+        # Calculate timing
+        # Each cycle: move to side + hold + move to other side + hold
+        cycle_time = 2 * (move_time + side_hold_time)  # Time for one complete cycle
+        total_arch_time = cycles * cycle_time  # Time for all cycles
+        return_duration = 0.5  # Quick return to center
+        total_duration = total_arch_time + return_duration
         
         # Check if animation should end
         if t >= total_duration:
@@ -355,20 +367,34 @@ class IdleAnimations:
         
         center_x, center_y = WIDTH//2, HEIGHT//2
         
-        if t < arch_duration:
-            # 2 full cycles on top half of screen
-            # Each cycle: left → right → left
-            progress = t / arch_duration  # 0 to 1
-            angle = progress * 2 * math.pi  # 0 to 2π (2 full circles)
+        if t < total_arch_time:
+            # Calculate which cycle and phase we're in
+            cycle_t = t % cycle_time
+            cycle_num = int(t / cycle_time)
             
-            # Calculate position on circle (top half only)
-            offset_x = arch_radius * math.cos(angle)  # -60 to +60 and back
-            offset_y = -arch_radius * math.sin(angle)  # 0 to -60 (top half only)
+            if cycle_t < move_time:
+                # Moving from left to right
+                progress = cycle_t / move_time
+                offset_x = arch_radius * (2 * progress - 1)  # -100 to +100
+                offset_y = -arch_radius * 0.3  # Stay high up
+            elif cycle_t < move_time + side_hold_time:
+                # Holding at right side
+                offset_x = arch_radius  # +100 (right edge)
+                offset_y = -arch_radius * 0.3  # Stay high up
+            elif cycle_t < 2 * move_time + side_hold_time:
+                # Moving from right to left
+                progress = (cycle_t - move_time - side_hold_time) / move_time
+                offset_x = arch_radius * (1 - 2 * progress)  # +100 to -100
+                offset_y = -arch_radius * 0.3  # Stay high up
+            else:
+                # Holding at left side
+                offset_x = -arch_radius  # -100 (left edge)
+                offset_y = -arch_radius * 0.3  # Stay high up
         else:
             # Return to center
-            return_progress = (t - arch_duration) / return_duration
+            return_progress = (t - total_arch_time) / return_duration
             # Smoothly return to center from wherever we ended
-            offset_x = arch_radius * (1 - return_progress)  # Current position to 0
+            offset_x = -arch_radius * (1 - return_progress)  # Current position to 0
             offset_y = 0  # Stay at center vertically
         
         left_x = center_x + offset_x
