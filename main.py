@@ -15,9 +15,15 @@ import argparse
 from test_gc9a01 import GC9A01
 
 # Display configuration
-CS_PIN = 8   # GPIO 8 (CE0)
-DC_PIN = 25  # GPIO 25
-RST_PIN = 27 # GPIO 27
+# Display 1 (Left Eye)
+DISPLAY1_CS_PIN = 8   # GPIO 8 (CE0)
+DISPLAY1_DC_PIN = 25  # GPIO 25
+DISPLAY1_RST_PIN = 27 # GPIO 27
+
+# Display 2 (Right Eye)
+DISPLAY2_CS_PIN = 7   # GPIO 7 (CE1)
+DISPLAY2_DC_PIN = 24  # GPIO 24
+DISPLAY2_RST_PIN = 23 # GPIO 23
 
 # Display dimensions
 WIDTH = 240
@@ -25,15 +31,22 @@ HEIGHT = 240
 
 class EyeTracker:
     def __init__(self, enable_preview=True):
-        self.display = None
+        self.display1 = None  # Left eye display
+        self.display2 = None  # Right eye display
         self.camera = None
         self.face_cascade = None
         self.running = False
         self.enable_preview = enable_preview  # NEW: Control preview window
         
-        # Eye tracking variables
+        # Eye tracking variables (both eyes)
         self.target_eye_position = (WIDTH//2, HEIGHT//2)
         self.current_eye_position = (WIDTH//2, HEIGHT//2)
+        
+        # Separate eye positions for dual display
+        self.target_left_eye = (WIDTH//2, HEIGHT//2)
+        self.target_right_eye = (WIDTH//2, HEIGHT//2)
+        self.current_left_eye = (WIDTH//2, HEIGHT//2)
+        self.current_right_eye = (WIDTH//2, HEIGHT//2)
         self.eye_movement_speed = 0.08  # Much slower, smoother movement to reduce shaking
         self.last_motion_time = time.time()
         self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
@@ -75,10 +88,12 @@ class EyeTracker:
         self.camera_width = 640  # 2x higher resolution for better tracking
         self.camera_height = 480  # 4:3 aspect ratio
         
-        # Pre-rendered eye cache (optimization #1)
-        self.eye_cache = {}
+        # Pre-rendered eye cache (optimization #1) - separate for each eye
+        self.eye_cache_left = {}
+        self.eye_cache_right = {}
         self.cache_size = 50  # Cache 50 eye positions (more aggressive)
-        self.last_rendered_pos = None
+        self.last_rendered_pos_left = None
+        self.last_rendered_pos_right = None
         
         # Frame skipping (optimization #3)
         self.display_update_counter = 0
@@ -93,13 +108,30 @@ class EyeTracker:
         self.frame_skip_interval = 1  # Skip every 2nd frame capture
         
     def init_display(self):
-        """Initialize the GC9A01 display"""
+        """Initialize both GC9A01 displays"""
         try:
-            self.display = GC9A01()
-            print("GC9A01 display initialized successfully!")
+            print("Initializing Display 1 (Left Eye)...")
+            self.display1 = GC9A01(
+                spi_bus=0, spi_device=0,
+                cs_pin=DISPLAY1_CS_PIN,
+                dc_pin=DISPLAY1_DC_PIN,
+                rst_pin=DISPLAY1_RST_PIN
+            )
+            print("Display 1 initialized successfully!")
+            
+            print("Initializing Display 2 (Right Eye)...")
+            self.display2 = GC9A01(
+                spi_bus=0, spi_device=1,
+                cs_pin=DISPLAY2_CS_PIN,
+                dc_pin=DISPLAY2_DC_PIN,
+                rst_pin=DISPLAY2_RST_PIN
+            )
+            print("Display 2 initialized successfully!")
+            
+            print("Both GC9A01 displays initialized successfully!")
             return True
         except Exception as e:
-            print(f"Failed to initialize display: {e}")
+            print(f"Failed to initialize displays: {e}")
             return False
     
     def init_camera(self):
@@ -164,7 +196,7 @@ class EyeTracker:
             print(f"Failed to initialize face detection: {e}")
             return False
     
-    def create_eye_image(self, eye_x, eye_y, blink_state=1.0):
+    def create_eye_image(self, eye_x, eye_y, blink_state=1.0, eye_cache=None):
         """Create eye image with blinking support + RGB565 pre-conversion"""
         # Round to nearest 5 pixels for smoother movement (still good caching)
         cache_x = round(eye_x / 5) * 5
@@ -173,8 +205,8 @@ class EyeTracker:
         cache_key = (cache_x, cache_y, blink_key)
         
         # Check cache first (cache stores RGB565 bytes directly!)
-        if cache_key in self.eye_cache:
-            return self.eye_cache[cache_key]
+        if cache_key in eye_cache:
+            return eye_cache[cache_key]
         
         # Render directly at full resolution for better quality
         render_size = WIDTH  # 240x240 full resolution
@@ -240,12 +272,12 @@ class EyeTracker:
         rgb565_bytes = rgb565_full.astype('>u2').tobytes()
         
         # Cache management - keep only recent entries
-        if len(self.eye_cache) >= self.cache_size:
+        if len(eye_cache) >= self.cache_size:
             # Remove oldest entry
-            self.eye_cache.pop(next(iter(self.eye_cache)))
+            eye_cache.pop(next(iter(eye_cache)))
         
         # Cache the RGB565 bytes directly!
-        self.eye_cache[cache_key] = rgb565_bytes
+        eye_cache[cache_key] = rgb565_bytes
         return rgb565_bytes
     
     def detect_motion(self, frame):
@@ -316,25 +348,46 @@ class EyeTracker:
                 avg_x = sum(pos[0] for pos in self.motion_history) / len(self.motion_history)
                 avg_y = sum(pos[1] for pos in self.motion_history) / len(self.motion_history)
                 self.target_eye_position = (avg_x, avg_y)
+                
+                # Set both eyes to the same position (synchronized movement)
+                self.target_left_eye = (avg_x, avg_y)
+                self.target_right_eye = (avg_x, avg_y)
             else:
                 self.target_eye_position = (eye_x, eye_y)
+                self.target_left_eye = (eye_x, eye_y)
+                self.target_right_eye = (eye_x, eye_y)
         else:
             # No motion detected - check timeout
             if time.time() - self.last_motion_time > self.motion_timeout:
                 # Return to center after timeout
-                self.target_eye_position = (WIDTH//2, HEIGHT//2)
+                center_pos = (WIDTH//2, HEIGHT//2)
+                self.target_eye_position = center_pos
+                self.target_left_eye = center_pos
+                self.target_right_eye = center_pos
                 self.motion_history.clear()  # Clear history when returning to center
     
     def smooth_eye_movement(self):
-        """Smoothly interpolate eye movement"""
-        current_x, current_y = self.current_eye_position
-        target_x, target_y = self.target_eye_position
+        """Smoothly interpolate eye movement for both eyes"""
+        # Smooth left eye movement
+        current_left_x, current_left_y = self.current_left_eye
+        target_left_x, target_left_y = self.target_left_eye
         
-        # Smooth interpolation
-        new_x = current_x + (target_x - current_x) * self.eye_movement_speed
-        new_y = current_y + (target_y - current_y) * self.eye_movement_speed
+        new_left_x = current_left_x + (target_left_x - current_left_x) * self.eye_movement_speed
+        new_left_y = current_left_y + (target_left_y - current_left_y) * self.eye_movement_speed
         
-        self.current_eye_position = (new_x, new_y)
+        self.current_left_eye = (new_left_x, new_left_y)
+        
+        # Smooth right eye movement
+        current_right_x, current_right_y = self.current_right_eye
+        target_right_x, target_right_y = self.target_right_eye
+        
+        new_right_x = current_right_x + (target_right_x - current_right_x) * self.eye_movement_speed
+        new_right_y = current_right_y + (target_right_y - current_right_y) * self.eye_movement_speed
+        
+        self.current_right_eye = (new_right_x, new_right_y)
+        
+        # Keep backward compatibility
+        self.current_eye_position = self.current_left_eye
     
     def update_fps(self):
         """Update FPS counter"""
@@ -439,8 +492,8 @@ class EyeTracker:
         """Display thread - LIMITED to 15 FPS to not block camera"""
         while self.running:
             try:
-                # Check if display is initialized
-                if not self.display:
+                # Check if displays are initialized
+                if not self.display1 or not self.display2:
                     time.sleep(0.1)
                     continue
                 
@@ -474,40 +527,8 @@ class EyeTracker:
                             # More realistic timing: 3-8 seconds between blinks
                             self.next_blink_delay = np.random.uniform(3, 8)
                 
-                # OPTIMIZATION 11: Skip updates if eye position hasn't changed significantly
-                eye_x, eye_y = self.current_eye_position
-                rounded_pos = (round(eye_x / 5) * 5, round(eye_y / 5) * 5, round(self.blink_state * 10) / 10)
-                
-                # Only update if moved significantly or blink state changed
-                position_changed = rounded_pos != self.last_rendered_pos
-                blink_changed = self.is_blinking and (self.blink_state != getattr(self, 'last_blink_state', 1.0))
-                
-                if position_changed or blink_changed:
-                    t0 = time.time()
-                    
-                    # Generate eye image
-                    rgb565_bytes = self.create_eye_image(int(eye_x), int(eye_y), self.blink_state)
-                    
-                    # SIMPLE: Full screen update - no smart clearing, no windows
-                    self.display._write_command(0x2A)  # Column address set
-                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
-                    self.display._write_command(0x2B)  # Row address set
-                    self.display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
-                    self.display._write_command(0x2C)  # Memory write
-                    
-                    # Send full screen data
-                    GPIO.output(self.display.dc_pin, GPIO.HIGH)
-                    
-                    # Send data in optimized chunks (4096 is max safe size)
-                    chunk_size = 4096  # Maximum safe chunk size for SPI
-                    for i in range(0, len(rgb565_bytes), chunk_size):
-                        chunk = rgb565_bytes[i:i+chunk_size]
-                        self.display.spi.writebytes(chunk)  # SPI handles CS automatically
-                    
-                    display_time = (time.time() - t0) * 1000  # ms
-                    self.timing_display.append(display_time)
-                    self.last_rendered_pos = rounded_pos
-                    self.last_blink_state = self.blink_state
+                # Update both displays
+                self._update_both_displays()
                 
                 # 30 FPS for faster eye movement
                 time.sleep(1.0/30.0)
@@ -515,6 +536,66 @@ class EyeTracker:
             except Exception as e:
                 print(f"Display thread error: {e}")
                 time.sleep(0.1)
+    
+    def _update_both_displays(self):
+        """Update both displays with current eye positions"""
+        # Get current eye positions
+        left_eye_x, left_eye_y = self.current_left_eye
+        right_eye_x, right_eye_y = self.current_right_eye
+        
+        # Check if we need to update (optimization)
+        left_rounded_pos = (round(left_eye_x / 5) * 5, round(left_eye_y / 5) * 5, round(self.blink_state * 10) / 10)
+        right_rounded_pos = (round(right_eye_x / 5) * 5, round(right_eye_y / 5) * 5, round(self.blink_state * 10) / 10)
+        
+        # Check if positions changed significantly
+        left_changed = left_rounded_pos != self.last_rendered_pos_left
+        right_changed = right_rounded_pos != self.last_rendered_pos_right
+        blink_changed = self.is_blinking and (self.blink_state != getattr(self, 'last_blink_state', 1.0))
+        
+        if left_changed or blink_changed:
+            t0 = time.time()
+            
+            # Generate left eye image
+            rgb565_bytes_left = self.create_eye_image(int(left_eye_x), int(left_eye_y), self.blink_state, self.eye_cache_left)
+            
+            # Update left display
+            self._send_to_display(self.display1, rgb565_bytes_left)
+            
+            self.last_rendered_pos_left = left_rounded_pos
+        
+        if right_changed or blink_changed:
+            t0 = time.time()
+            
+            # Generate right eye image
+            rgb565_bytes_right = self.create_eye_image(int(right_eye_x), int(right_eye_y), self.blink_state, self.eye_cache_right)
+            
+            # Update right display
+            self._send_to_display(self.display2, rgb565_bytes_right)
+            
+            self.last_rendered_pos_right = right_rounded_pos
+        
+        if left_changed or right_changed or blink_changed:
+            display_time = (time.time() - t0) * 1000  # ms
+            self.timing_display.append(display_time)
+            self.last_blink_state = self.blink_state
+    
+    def _send_to_display(self, display, rgb565_bytes):
+        """Send RGB565 data to a specific display"""
+        # Set display window
+        display._write_command(0x2A)  # Column address set
+        display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+        display._write_command(0x2B)  # Row address set
+        display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
+        display._write_command(0x2C)  # Memory write
+        
+        # Send full screen data
+        GPIO.output(display.dc_pin, GPIO.HIGH)
+        
+        # Send data in optimized chunks (4096 is max safe size)
+        chunk_size = 4096  # Maximum safe chunk size for SPI
+        for i in range(0, len(rgb565_bytes), chunk_size):
+            chunk = rgb565_bytes[i:i+chunk_size]
+            display.spi.writebytes(chunk)  # SPI handles CS automatically
                 
 
     def start(self):
@@ -526,16 +607,18 @@ class EyeTracker:
         """Stop the eye tracker"""
         self.running = False
         
-        if self.display:
-            self.display.close()
+        if self.display1:
+            self.display1.close()
+        if self.display2:
+            self.display2.close()
         if self.camera:
             self.camera.close()
         cv2.destroyAllWindows()
-        print("Eye Tracker stopped")
+        print("Dual Eye Tracker stopped")
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Eye Tracker with GC9A01 Display')
+    parser = argparse.ArgumentParser(description='Dual Eye Tracker with GC9A01 Displays')
     parser.add_argument('--no-preview', action='store_true', 
                        help='Disable preview window for maximum performance')
     parser.add_argument('--fps-test', action='store_true',
@@ -552,6 +635,12 @@ def main():
         print("=" * 50)
         print("FPS TEST MODE - No preview window")
         print("Maximum performance enabled")
+        print("Dual display mode")
+        print("=" * 50)
+    else:
+        print("=" * 50)
+        print("DUAL EYE TRACKER MODE")
+        print("Both displays will track motion together")
         print("=" * 50)
     
     eye_tracker.start()
