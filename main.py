@@ -16,7 +16,7 @@ from display_settings import (
 )
 
 # Import eye template
-from eye_template import create_eye_image
+from eye_template import create_eye_image, preview_eyes, get_eye_colors
 
 # Import idle animations
 from idle_animations import IdleAnimations
@@ -118,9 +118,10 @@ class EyeTracker:
         self.camera_width = 800
         self.camera_height = 600 
         
-        # Eye color system
-        self.base_eye_color = [255, 255, 0]  # Yellow (idle/motion detection)
-        self.face_eye_color = [255, 0, 0]  # Intense red (face tracking)
+        # Eye color system - get colors from eye template
+        eye_colors = get_eye_colors()
+        self.base_eye_color = eye_colors['normal_color'].copy()  # Normal/idle color from template
+        self.face_eye_color = eye_colors['tracked_color'].copy()  # Face tracking color from template
         self.current_eye_color = self.base_eye_color.copy()
         self.color_transition_speed = 0.05  # How fast colors change
         self.target_eye_color = self.base_eye_color.copy()
