@@ -74,14 +74,23 @@ class EyeTracker:
         self.face_detection_timeout = 5.0  # Keep red eyes for 5 seconds after face detection
         self.last_face_detection_time = time.time()
         
-        # Dynamic eye sizing based on face size
+        # Face-following mode for eye positioning
+        self.face_following_mode = False
+        self.face_following_timeout = 7.0  # Hold face position for 5 seconds
+        self.last_face_following_time = time.time()
+        self.current_face_center = None
+        self.last_motion_time = time.time()  # Track last motion for interruption
+        
+        # Dynamic eye sizing based on face size with smooth animation
         self.face_sizes = []  # Store last 5 face sizes
         self.max_face_history = 5
         self.min_face_size = 50 * 50  # 50x50 pixels (2500 area)
         self.max_face_size = 240 * 240  # 240x240 pixels (57600 area)
         self.current_eye_size_index = 15  # Current size is 15/20 (middle-large)
-        self.total_eye_sizes = 20  # 20 different eye sizes
-        self.base_eye_size = 50  # Base iris radius (current size)
+        self.target_eye_size_index = 15  # Target size for smooth animation
+        self.total_eye_sizes = 30  # 20 different eye sizes
+        self.base_eye_size = 40  # Base iris radius (current size)
+        self.eye_size_transition_speed = 0.1  # How fast eye size changes (0.1 = 10% per frame)
         
         # Motion detection variables - Pi 5 optimized
         self.prev_frame = None
@@ -101,7 +110,7 @@ class EyeTracker:
         # Pre-rendered eye cache (optimization #1) - separate for each eye
         self.eye_cache_left = {}
         self.eye_cache_right = {}
-        self.cache_size = 50  # Cache 50 eye positions (more aggressive)
+        self.cache_size = 100  # Cache 50 eye positions (more aggressive)
         self.last_rendered_pos_left = None
         self.last_rendered_pos_right = None
         
@@ -273,7 +282,7 @@ class EyeTracker:
         return faces
     
     def update_face_detection(self, faces):
-        """Update face detection for color changes and eye sizing"""
+        """Update face detection for color changes and face-following mode"""
         current_time = time.time()
         
         if len(faces) > 0:
@@ -289,6 +298,9 @@ class EyeTracker:
             # Update face size for eye sizing
             self.update_face_size(faces)
             
+            # Handle face-following mode
+            self.update_face_following(faces, current_time)
+            
         else:
             # No face detected - check if we should turn eyes back to yellow
             if self.face_detected:
@@ -296,6 +308,53 @@ class EyeTracker:
                     print("No face detected for 5 seconds. Eyes returning to yellow...")
                     self.face_detected = False
                     self.target_eye_color = self.base_eye_color.copy()
+            
+            # Exit face-following mode if no face
+            if self.face_following_mode:
+                print("No face detected. Exiting face-following mode...")
+                self.face_following_mode = False
+                self.current_face_center = None
+    
+    def update_face_following(self, faces, current_time):
+        """Update face-following mode for eye positioning"""
+        if len(faces) > 0:
+            # Use the largest face (most prominent)
+            largest_face = max(faces, key=lambda f: f[2] * f[3])
+            x, y, w, h = largest_face
+            
+            # Calculate face center
+            face_center_x = x + w//2
+            face_center_y = y + h//2
+            self.current_face_center = (face_center_x, face_center_y)
+            
+            # Check if we should enter face-following mode
+            # Only enter if there's been no recent motion
+            time_since_motion = current_time - self.last_motion_time
+            if not self.face_following_mode and time_since_motion > 1.0:  # 1 second of no motion
+                print("Entering face-following mode! Eyes will track face for 5 seconds...")
+                self.face_following_mode = True
+                self.last_face_following_time = current_time
+            
+            # Reset face-following timer if in mode
+            if self.face_following_mode:
+                self.last_face_following_time = current_time
+    
+    def get_eye_position_from_face(self, face_center):
+        """Calculate eye position based on face center"""
+        if face_center is None:
+            return (WIDTH//2, HEIGHT//2)
+        
+        face_x, face_y = face_center
+        
+        # Normalize face position (-1 to 1)
+        norm_x = (face_x - self.camera_width//2) / (self.camera_width//2)
+        norm_y = (face_y - self.camera_height//2) / (self.camera_height//2)
+        
+        # Map to display coordinates
+        eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 20)  # Inverted X
+        eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 20)  # Normal Y
+        
+        return (eye_x, eye_y)
     
     def update_face_size(self, faces):
         """Update face size history and calculate eye size"""
@@ -323,10 +382,24 @@ class EyeTracker:
                 face_ratio = max(0, min(1, face_ratio))  # Clamp between 0 and 1
                 
                 # Map to eye size index (0-19)
-                self.current_eye_size_index = int(face_ratio * (self.total_eye_sizes - 1))
+                self.target_eye_size_index = int(face_ratio * (self.total_eye_sizes - 1))
                 
-                # Log face size and eye size
-                print(f"Face: {w}x{h} (Area: {face_area:.0f}), Avg: {avg_face_size:.0f}, Eye Size: {self.current_eye_size_index + 1}/20")
+                # Log face size and target eye size
+                print(f"Face: {w}x{h} (Area: {face_area:.0f}), Avg: {avg_face_size:.0f}, Target Eye Size: {self.target_eye_size_index + 1}/20")
+    
+    def update_eye_size_smoothly(self):
+        """Smoothly animate eye size towards target"""
+        # Calculate difference between current and target
+        size_diff = self.target_eye_size_index - self.current_eye_size_index
+        
+        # If there's a difference, move towards target
+        if abs(size_diff) > 0.1:  # Small threshold to avoid jitter
+            # Move towards target by transition speed
+            move_amount = size_diff * self.eye_size_transition_speed
+            self.current_eye_size_index += move_amount
+            
+            # Clamp to valid range
+            self.current_eye_size_index = max(0, min(self.total_eye_sizes - 1, self.current_eye_size_index))
     
     def get_current_eye_size(self):
         """Get current eye size based on face size"""
@@ -386,8 +459,48 @@ class EyeTracker:
         return motion_boxes
     
     def update_eye_position(self, motion_boxes):
-        """Update eye position based on motion detection only"""
+        """Update eye position based on motion detection or face-following mode"""
+        current_time = time.time()
+        
+        # Check for motion interruption of face-following mode
         if motion_boxes and len(motion_boxes) > 0:
+            self.last_motion_time = current_time
+            # If in face-following mode and motion detected, exit face-following
+            if self.face_following_mode:
+                print("Motion detected! Exiting face-following mode...")
+                self.face_following_mode = False
+                self.current_face_center = None
+        
+        # Check if face-following mode should timeout
+        if self.face_following_mode:
+            if current_time - self.last_face_following_time > self.face_following_timeout:
+                print("Face-following timeout. Returning to motion detection...")
+                self.face_following_mode = False
+                self.current_face_center = None
+        
+        # Choose positioning method based on mode
+        if self.face_following_mode and self.current_face_center:
+            # Face-following mode - use face position
+            eye_x, eye_y = self.get_eye_position_from_face(self.current_face_center)
+            
+            # Add to motion history for smoothing
+            self.motion_history.append((eye_x, eye_y))
+            if len(self.motion_history) > self.motion_history_size:
+                self.motion_history.pop(0)
+            
+            # Calculate smoothed position
+            if len(self.motion_history) >= 2:
+                avg_x = sum(pos[0] for pos in self.motion_history) / len(self.motion_history)
+                avg_y = sum(pos[1] for pos in self.motion_history) / len(self.motion_history)
+                self.target_eye_position = (avg_x, avg_y)
+                self.target_left_eye = (avg_x, avg_y)
+                self.target_right_eye = (avg_x, avg_y)
+            else:
+                self.target_eye_position = (eye_x, eye_y)
+                self.target_left_eye = (eye_x, eye_y)
+                self.target_right_eye = (eye_x, eye_y)
+                
+        elif motion_boxes and len(motion_boxes) > 0:
             # Motion detection mode - use motion position
             self.last_motion_time = time.time()
             
@@ -583,6 +696,9 @@ class EyeTracker:
                 
                 # Smooth eye movement
                 self.smooth_eye_movement()
+                
+                # Smooth eye size animation
+                self.update_eye_size_smoothly()
                 
                 # Handle blinking (more natural, human-like)
                 current_time = time.time()
