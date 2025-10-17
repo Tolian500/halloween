@@ -69,7 +69,7 @@ class EyeTracker:
         
         # Face detection and tracking
         self.face_detection_counter = 0
-        self.face_detection_interval = 60  # Run face detection every 60 frames
+        self.face_detection_interval = 30  # Run face detection every 60 frames
         self.face_tracking_mode = False
         self.current_face_center = None
         self.face_tracking_timeout = 5.0  # Stop face tracking after 5 seconds of no face
@@ -83,8 +83,8 @@ class EyeTracker:
         self.camera_height = 600  
         
         # Eye color system
-        self.base_eye_color = [200, 50, 25]  # Red (motion detection)
-        self.face_eye_color = [255, 165, 0]  # Orange (face tracking)
+        self.base_eye_color = [255, 255, 0]  # Yellow (idle/motion detection)
+        self.face_eye_color = [255, 0, 0]  # Red (face tracking)
         self.current_eye_color = self.base_eye_color.copy()
         self.color_transition_speed = 0.05  # How fast colors change
         self.target_eye_color = self.base_eye_color.copy()

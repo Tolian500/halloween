@@ -236,12 +236,6 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
             # Draw pupil (black circle) with blink mask
             mask_pupil = ((x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
             img_array[mask_pupil] = [0, 0, 0]  # Black pupil
-            
-            # Draw highlight (white circle) - offset, with blink mask
-            highlight_x = render_x + 6
-            highlight_y = render_y - 4
-            mask_highlight = ((x - highlight_x)**2 + (y - highlight_y)**2 <= 6**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
-            img_array[mask_highlight] = [255, 255, 255]  # White highlight
     else:
         # Fully open eye
         mask_iris = (x - render_x)**2 + (y - render_y)**2 <= iris_radius**2
@@ -249,11 +243,6 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
         
         mask_pupil = (x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2
         img_array[mask_pupil] = [0, 0, 0]  # Black pupil
-        
-        highlight_x = render_x + 6
-        highlight_y = render_y - 4
-        mask_highlight = (x - highlight_x)**2 + (y - highlight_y)**2 <= 6**2
-        img_array[mask_highlight] = [255, 255, 255]  # White highlight
     
     # Convert RGB888 to RGB565 using NumPy (direct conversion - no scaling needed!)
     r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits

@@ -53,7 +53,7 @@ def run_eye_tracker(eye_tracker):
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 
                 # Draw motion detection rectangles on frame
-                if motion_boxes:  # Check if not None and not empty
+                if motion_boxes is not None and len(motion_boxes) > 0:  # Check if not None and not empty
                     for (x, y, w, h) in motion_boxes:
                         cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
                         # Draw center point
@@ -64,7 +64,7 @@ def run_eye_tracker(eye_tracker):
                         cv2.putText(frame_bgr, 'Motion', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
                 # Draw face detection rectangles on frame
-                if faces:  # Check if not None and not empty
+                if faces is not None and len(faces) > 0:  # Check if not None and not empty
                     for (x, y, w, h) in faces:
                         cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 165, 255), 2)  # Orange color
                         # Draw center point
