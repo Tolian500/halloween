@@ -75,12 +75,15 @@ def run_eye_tracker(eye_tracker):
                         cv2.putText(frame_bgr, 'Face', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
                 
                 # Add mode indicator
-                mode_text = "Face Tracking" if eye_tracker.face_tracking_mode else "Motion Detection"
-                mode_color = (0, 165, 255) if eye_tracker.face_tracking_mode else (0, 255, 0)
+                mode_text = "Red Eyes" if eye_tracker.face_detected else "Motion Detection"
+                mode_color = (0, 0, 255) if eye_tracker.face_detected else (0, 255, 0)
                 cv2.putText(frame_bgr, mode_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
                 
-                # Show at full resolution for better visibility
-                cv2.imshow('Motion Detection', frame_bgr)
+                # Flip image horizontally for mirror effect
+                frame_mirrored = cv2.flip(frame_bgr, 1)
+                
+                # Show mirrored image for better user experience
+                cv2.imshow('Eye Tracker Preview (Mirrored)', frame_mirrored)
                 
                 # Check for 'q' key press to quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):

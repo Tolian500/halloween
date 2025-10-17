@@ -67,20 +67,29 @@ class EyeTracker:
         self.frame_queue = queue.Queue(maxsize=1) if enable_preview else None
         self.display_thread = None
         
-        # Face detection and tracking
+        # Face detection for color changes only - Pi 5 optimized
         self.face_detection_counter = 0
-        self.face_detection_interval = 30  # Run face detection every 60 frames
-        self.face_tracking_mode = False
-        self.current_face_center = None
-        self.face_tracking_timeout = 5.0  # Stop face tracking after 5 seconds of no face
-        self.last_face_time = time.time()
+        self.face_detection_interval = 20  # Run face detection every 20 frames
+        self.face_detected = False
+        self.face_detection_timeout = 5.0  # Keep red eyes for 5 seconds after face detection
+        self.last_face_detection_time = time.time()
         
-        # Motion detection variables
+        # Dynamic eye sizing based on face size
+        self.face_sizes = []  # Store last 5 face sizes
+        self.max_face_history = 5
+        self.min_face_size = 50 * 50  # 50x50 pixels (2500 area)
+        self.max_face_size = 240 * 240  # 240x240 pixels (57600 area)
+        self.current_eye_size_index = 15  # Current size is 15/20 (middle-large)
+        self.total_eye_sizes = 20  # 20 different eye sizes
+        self.base_eye_size = 50  # Base iris radius (current size)
+        
+        # Motion detection variables - Pi 5 optimized
         self.prev_frame = None
-        self.motion_threshold = 30  # Threshold for motion detection
-        self.min_motion_area = 100  # Larger minimum area for higher resolution
+        self.motion_threshold = 25  # Lower threshold for higher resolution
+        self.min_motion_area = 200  # Larger minimum area for higher resolution
+        # Pi 5 optimized resolution - higher resolution for better detection
         self.camera_width = 800
-        self.camera_height = 600  
+        self.camera_height = 600 
         
         # Eye color system
         self.base_eye_color = [255, 255, 0]  # Yellow (idle/motion detection)
@@ -172,18 +181,21 @@ class EyeTracker:
             traceback.print_exc()
     
     def init_camera(self):
-        """Initialize camera with optimized resolution for motion detection"""
+        """Initialize camera with Pi 5 optimized settings"""
         try:
             self.camera = Picamera2()
             
-            # Use optimized resolution for motion detection
+            # Pi 5 optimized configuration - higher resolution and better performance
             config = self.camera.create_video_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "YUV420"}
+                main={"size": (self.camera_width, self.camera_height), "format": "YUV420"},
+                # Add buffer configuration for Pi 5
+                buffer_count=4,  # More buffers for smoother operation
+                queue=True       # Enable frame queue for better performance
             )
             self.camera.configure(config)
             
             self.camera.start()
-            print(f"Camera: {self.camera_width}x{self.camera_height} (YUV420, motion detection mode)")
+            print(f"Camera: {self.camera_width}x{self.camera_height} (YUV420, Pi 5 optimized)")
             print(f"Sensor resolution: {self.camera.sensor_resolution}")
             return True
         except Exception as e:
@@ -234,8 +246,9 @@ class EyeTracker:
             return False
     
     def create_eye_image(self, eye_x, eye_y, blink_state=1.0, eye_cache=None):
-        """Create eye image with blinking support + RGB565 pre-conversion"""
-        return create_eye_image(eye_x, eye_y, blink_state, eye_cache, self.cache_size, self.current_eye_color)
+        """Create eye image with blinking support + RGB565 pre-conversion + dynamic sizing"""
+        current_eye_size = self.get_current_eye_size()
+        return create_eye_image(eye_x, eye_y, blink_state, eye_cache, self.cache_size, self.current_eye_color, current_eye_size)
     
     def detect_face(self, frame):
         """Detect faces in the frame"""
@@ -259,38 +272,73 @@ class EyeTracker:
         
         return faces
     
-    def update_face_tracking(self, faces):
-        """Update face tracking mode based on detected faces"""
+    def update_face_detection(self, faces):
+        """Update face detection for color changes and eye sizing"""
         current_time = time.time()
         
         if len(faces) > 0:
-            # Face detected!
-            self.last_face_time = current_time
-            
-            if not self.face_tracking_mode:
-                print("Face detected! Switching to face tracking mode...")
-                self.face_tracking_mode = True
+            # Face detected! Set red eyes for 5 seconds
+            if not self.face_detected:
+                print("Face detected! Eyes turning red for 5 seconds...")
+                self.face_detected = True
                 self.target_eye_color = self.face_eye_color.copy()
             
+            # Reset the timer
+            self.last_face_detection_time = current_time
+            
+            # Update face size for eye sizing
+            self.update_face_size(faces)
+            
+        else:
+            # No face detected - check if we should turn eyes back to yellow
+            if self.face_detected:
+                if current_time - self.last_face_detection_time > self.face_detection_timeout:
+                    print("No face detected for 5 seconds. Eyes returning to yellow...")
+                    self.face_detected = False
+                    self.target_eye_color = self.base_eye_color.copy()
+    
+    def update_face_size(self, faces):
+        """Update face size history and calculate eye size"""
+        if len(faces) > 0:
             # Use the largest face (most prominent)
             largest_face = max(faces, key=lambda f: f[2] * f[3])
             x, y, w, h = largest_face
+            face_area = w * h
             
-            # Calculate face center
-            face_center_x = x + w//2
-            face_center_y = y + h//2
+            # Add to history
+            self.face_sizes.append(face_area)
             
-            self.current_face_center = (face_center_x, face_center_y)
+            # Keep only last 5
+            if len(self.face_sizes) > self.max_face_history:
+                self.face_sizes.pop(0)
             
-        else:
-            # No face detected
-            if self.face_tracking_mode:
-                # Check if we should exit face tracking mode
-                if current_time - self.last_face_time > self.face_tracking_timeout:
-                    print("No face detected for 5 seconds. Switching back to motion detection...")
-                    self.face_tracking_mode = False
-                    self.target_eye_color = self.base_eye_color.copy()
-                    self.current_face_center = None
+            # Calculate average face size
+            if len(self.face_sizes) > 0:
+                avg_face_size = sum(self.face_sizes) / len(self.face_sizes)
+                
+                # Map face size to eye size index (0-19)
+                # Face size 50x50 (2500) -> smallest eyes (index 0)
+                # Face size 240x240 (57600) -> largest eyes (index 19)
+                face_ratio = (avg_face_size - self.min_face_size) / (self.max_face_size - self.min_face_size)
+                face_ratio = max(0, min(1, face_ratio))  # Clamp between 0 and 1
+                
+                # Map to eye size index (0-19)
+                self.current_eye_size_index = int(face_ratio * (self.total_eye_sizes - 1))
+                
+                # Log face size and eye size
+                print(f"Face: {w}x{h} (Area: {face_area:.0f}), Avg: {avg_face_size:.0f}, Eye Size: {self.current_eye_size_index + 1}/20")
+    
+    def get_current_eye_size(self):
+        """Get current eye size based on face size"""
+        # Eye sizes range from 20 to 80 pixels radius
+        min_eye_size = 20
+        max_eye_size = 80
+        
+        # Map index (0-19) to eye size (20-80)
+        size_ratio = self.current_eye_size_index / (self.total_eye_sizes - 1)
+        current_size = min_eye_size + (max_eye_size - min_eye_size) * size_ratio
+        
+        return int(current_size)
     
     def update_eye_color(self):
         """Smoothly transition eye color"""
@@ -301,23 +349,6 @@ class EyeTracker:
             
             # Ensure values stay within valid range
             self.current_eye_color[i] = max(0, min(255, self.current_eye_color[i]))
-    
-    def get_eye_position_from_face(self, face_center):
-        """Calculate eye position based on face center"""
-        if face_center is None:
-            return (WIDTH//2, HEIGHT//2)
-        
-        face_x, face_y = face_center
-        
-        # Normalize face position (-1 to 1)
-        norm_x = (face_x - self.camera_width//2) / (self.camera_width//2)
-        norm_y = (face_y - self.camera_height//2) / (self.camera_height//2)
-        
-        # Map to display coordinates
-        eye_x = WIDTH//2 - norm_x * (WIDTH//2 - 20)  # Inverted X
-        eye_y = HEIGHT//2 + norm_y * (HEIGHT//2 - 20)  # Normal Y
-        
-        return (eye_x, eye_y)
     
     def detect_motion(self, frame):
         """Detect motion in the frame using frame difference"""
@@ -354,30 +385,9 @@ class EyeTracker:
         
         return motion_boxes
     
-    def update_eye_position(self, motion_boxes, faces=None):
-        """Update eye position based on motion detection or face tracking"""
-        if self.face_tracking_mode and self.current_face_center:
-            # Face tracking mode - use face position
-            eye_x, eye_y = self.get_eye_position_from_face(self.current_face_center)
-            
-            # Add to motion history for smoothing
-            self.motion_history.append((eye_x, eye_y))
-            if len(self.motion_history) > self.motion_history_size:
-                self.motion_history.pop(0)
-            
-            # Calculate smoothed position
-            if len(self.motion_history) >= 2:
-                avg_x = sum(pos[0] for pos in self.motion_history) / len(self.motion_history)
-                avg_y = sum(pos[1] for pos in self.motion_history) / len(self.motion_history)
-                self.target_eye_position = (avg_x, avg_y)
-                self.target_left_eye = (avg_x, avg_y)
-                self.target_right_eye = (avg_x, avg_y)
-            else:
-                self.target_eye_position = (eye_x, eye_y)
-                self.target_left_eye = (eye_x, eye_y)
-                self.target_right_eye = (eye_x, eye_y)
-                
-        elif motion_boxes and len(motion_boxes) > 0:
+    def update_eye_position(self, motion_boxes):
+        """Update eye position based on motion detection only"""
+        if motion_boxes and len(motion_boxes) > 0:
             # Motion detection mode - use motion position
             self.last_motion_time = time.time()
             
@@ -482,8 +492,8 @@ class EyeTracker:
         print(f"  Camera Resolution: {self.camera_width}x{self.camera_height} (YUV420)")
         print(f"  Motion Detection: Frame Difference + Contours")
         print(f"  Display Resolution: 240x240 (full resolution)")
-        print(f"  Display FPS:       30 Hz")
-        print(f"  SPI Speed:         100 MHz")
+        print(f"  Display FPS:       60 Hz (Pi 5 optimized)")
+        print(f"  SPI Speed:         150 MHz (Pi 5 optimized)")
         print(f"  Motion Tracking:   Every frame")
         
         # Calculate theoretical max FPS
@@ -524,11 +534,11 @@ class EyeTracker:
                     face_detection_time = (time.time() - t2) * 1000  # ms
                     self.face_detection_counter = 0
                     
-                    # Update face tracking mode
-                    self.update_face_tracking(faces)
+                    # Update face detection for color changes
+                    self.update_face_detection(faces)
                 
-                # Update eye position based on motion detection or face tracking
-                self.update_eye_position(motion_boxes, faces)
+                # Update eye position based on motion detection only
+                self.update_eye_position(motion_boxes)
                 
                 # Store timing
                 self.timing_capture.append(capture_time)
@@ -607,8 +617,8 @@ class EyeTracker:
                 # Update both displays
                 self._update_both_displays()
                 
-                # 30 FPS for faster eye movement
-                time.sleep(1.0/30.0)
+                # Pi 5 optimized: 60 FPS for smoother eye movement
+                time.sleep(1.0/60.0)
                 
             except Exception as e:
                 print(f"Display thread error: {e}")

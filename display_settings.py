@@ -61,10 +61,10 @@ class GC9A01:
         except Exception as e:
             raise Exception(f"GPIO setup failed: {e}")
         
-        # Setup SPI
+        # Setup SPI - Pi 5 optimized speed (conservative)
         self.spi = spidev.SpiDev()
         self.spi.open(spi_bus, spi_device)
-        self.spi.max_speed_hz = 100000000  # 100 MHz
+        self.spi.max_speed_hz = 150000000  # 150 MHz (conservative Pi 5 optimization)
         self.spi.mode = 0
         
         # Initialize display
@@ -184,18 +184,24 @@ class GC9A01:
         if hasattr(self, 'spi'):
             self.spi.close()
 
-def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50, eye_color=None):
-    """Create eye image with blinking support + RGB565 pre-conversion"""
+def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50, eye_color=None, iris_radius=None):
+    """Create eye image with blinking support + RGB565 pre-conversion + dynamic sizing"""
     # Default eye color if not provided
     if eye_color is None:
         eye_color = [200, 50, 25]  # Red
+    
+    # Dynamic iris radius (default 50 if not provided)
+    if iris_radius is None:
+        iris_radius = 50  # Default size
+    pupil_radius = iris_radius // 2  # Pupil is half the iris size
     
     # Round to nearest 5 pixels for smoother movement (still good caching)
     cache_x = round(eye_x / 5) * 5
     cache_y = round(eye_y / 5) * 5
     blink_key = round(blink_state * 10) / 10  # Cache different blink states
     color_key = tuple(eye_color)  # Add color to cache key
-    cache_key = (cache_x, cache_y, blink_key, color_key)
+    size_key = iris_radius  # Add iris size to cache key
+    cache_key = (cache_x, cache_y, blink_key, color_key, size_key)
     
     # Check cache first (cache stores RGB565 bytes directly!)
     if cache_key in eye_cache:
@@ -211,9 +217,8 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
     render_x = int(eye_x)
     render_y = int(eye_y)
     
-    # Full size eye for better quality
-    iris_radius = 50  # Full size
-    pupil_radius = 25  # Full size
+    # Dynamic eye sizes based on face size
+    # iris_radius and pupil_radius are now calculated above
     
     # Calculate eye position (clamp to render bounds with margin)
     render_x = int(max(iris_radius, min(render_size - iris_radius, render_x)))
@@ -294,8 +299,8 @@ def send_to_display(display, rgb565_bytes):
     else:
         GPIO.output(display.dc_pin, GPIO.HIGH)  # Data mode
     
-    # Send data in optimized chunks (4096 is max safe size)
-    chunk_size = 4096  # Maximum safe chunk size for SPI
+    # Send data in optimized chunks (safe size for Pi 5)
+    chunk_size = 4096  # Safe chunk size for SPI (Pi 5 can handle this reliably)
     for i in range(0, len(rgb565_bytes), chunk_size):
         chunk = rgb565_bytes[i:i+chunk_size]
         display.spi.writebytes(chunk)  # SPI handles CS automatically
