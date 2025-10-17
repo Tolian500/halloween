@@ -11,6 +11,19 @@ import threading
 import queue
 import argparse
 
+# Try RPi.GPIO first for Pi 5 (more reliable), fallback to gpiozero
+try:
+    import RPi.GPIO as GPIO
+    USE_GPIOZERO = False
+    print("Using RPi.GPIO library")
+except ImportError:
+    try:
+        from gpiozero import DigitalOutputDevice
+        USE_GPIOZERO = True
+        print("Using gpiozero library")
+    except ImportError:
+        raise ImportError("Neither RPi.GPIO nor gpiozero is available. Please install one of them.")
+
 # Import the GC9A01 display class from our test script
 from test_gc9a01 import GC9A01
 
@@ -85,8 +98,8 @@ class EyeTracker:
         self.prev_frame = None
         self.motion_threshold = 30  # Threshold for motion detection
         self.min_motion_area = 1000  # Larger minimum area for higher resolution
-        self.camera_width = 640  # 2x higher resolution for better tracking
-        self.camera_height = 480  # 4:3 aspect ratio
+        self.camera_width = 1200 
+        self.camera_height = 600  
         
         # Pre-rendered eye cache (optimization #1) - separate for each eye
         self.eye_cache_left = {}
@@ -588,8 +601,12 @@ class EyeTracker:
         display._write_data([0x00, 0x00, 0x00, 0xEF])  # 0 to 239
         display._write_command(0x2C)  # Memory write
         
-        # Send full screen data
-        GPIO.output(display.dc_pin, GPIO.HIGH)
+        # Send full screen data using display's own GPIO handling
+        # Set data mode
+        if USE_GPIOZERO:
+            display.dc_device.on()  # Data mode
+        else:
+            GPIO.output(display.dc_pin, GPIO.HIGH)  # Data mode
         
         # Send data in optimized chunks (4096 is max safe size)
         chunk_size = 4096  # Maximum safe chunk size for SPI
