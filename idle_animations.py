@@ -7,7 +7,8 @@ Test various idle animations for the eye tracker before integrating into main co
 import time
 import math
 import random
-from display_settings import WIDTH, HEIGHT, create_eye_image, GC9A01, send_to_display
+from display_settings import WIDTH, HEIGHT, GC9A01, send_to_display
+from eye_template import create_eye_image
 
 class IdleAnimations:
     def __init__(self):

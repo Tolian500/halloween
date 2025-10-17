@@ -12,8 +12,11 @@ import argparse
 from display_settings import (
     GC9A01, DISPLAY1_CS_PIN, DISPLAY1_DC_PIN, DISPLAY1_RST_PIN,
     DISPLAY2_CS_PIN, DISPLAY2_DC_PIN, DISPLAY2_RST_PIN,
-    WIDTH, HEIGHT, create_eye_image, send_to_display
+    WIDTH, HEIGHT, send_to_display
 )
+
+# Import eye template
+from eye_template import create_eye_image
 
 # Import idle animations
 from idle_animations import IdleAnimations
