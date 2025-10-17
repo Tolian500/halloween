@@ -159,9 +159,9 @@ class IdleAnimations:
     def animation_3_vertical_scan_random_x(self, t):
         """Vertical scanning: left or right half, 3 up-down cycles"""
         # Animation parameters
-        scan_range = 80  # Large range to reach screen edges
-        hold_time = 1.0  # Hold at each position for 1 second
-        move_time = 0.25  # Move between positions in 0.25 seconds
+        scan_range = 40  # Reduced range (was 80) - less distance between up and down
+        hold_time = 0.5  # Reduced hold time (was 1.0) - faster overall
+        move_time = 0.15  # Faster movement (was 0.25) - quicker transitions
         cycles = 3  # Do exactly 3 up-down cycles
         
         # Calculate cycle time (move + hold + move + hold)
@@ -196,14 +196,14 @@ class IdleAnimations:
         if cycle_t < move_time:
             # Moving up
             progress = cycle_t / move_time
-            offset_y = -scan_range * progress  # 0 to -80
+            offset_y = -scan_range * progress  # 0 to -40
         elif cycle_t < move_time + hold_time:
             # Holding at top
-            offset_y = -scan_range  # -80 (top edge)
+            offset_y = -scan_range  # -40 (smaller range)
         elif cycle_t < 2 * move_time + hold_time:
             # Moving down
             progress = (cycle_t - move_time - hold_time) / move_time
-            offset_y = -scan_range * (1 - progress)  # -80 to 0
+            offset_y = -scan_range * (1 - progress)  # -40 to 0
         else:
             # Holding at bottom
             offset_y = 0  # Center vertically
