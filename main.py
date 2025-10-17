@@ -84,7 +84,7 @@ class EyeTracker:
         
         # Eye color system
         self.base_eye_color = [255, 255, 0]  # Yellow (idle/motion detection)
-        self.face_eye_color = [255, 0, 0]  # Red (face tracking)
+        self.face_eye_color = [255, 0, 0]  # Intense red (face tracking)
         self.current_eye_color = self.base_eye_color.copy()
         self.color_transition_speed = 0.05  # How fast colors change
         self.target_eye_color = self.base_eye_color.copy()

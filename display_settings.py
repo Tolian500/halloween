@@ -229,20 +229,36 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
         
         # Only draw eye in visible area
         if eyelid_bottom > eyelid_top:
+            # Add glow effect around iris with blink mask
+            glow_radius = iris_radius + 15  # Glow extends 15 pixels beyond iris
+            mask_glow = ((x - render_x)**2 + (y - render_y)**2 <= glow_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+            # Create glow with reduced intensity
+            glow_color = [int(c * 0.3) for c in eye_color]  # 30% intensity for glow
+            img_array[mask_glow] = glow_color
+            
             # Draw iris with blink mask
             mask_iris = ((x - render_x)**2 + (y - render_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
             img_array[mask_iris] = eye_color  # Dynamic eye color
             
-            # Draw pupil (black circle) with blink mask
+            # Draw pupil (white circle) with blink mask
             mask_pupil = ((x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
-            img_array[mask_pupil] = [0, 0, 0]  # Black pupil
+            img_array[mask_pupil] = [255, 255, 255]  # White pupil
     else:
         # Fully open eye
+        # Add glow effect around iris
+        glow_radius = iris_radius + 15  # Glow extends 15 pixels beyond iris
+        mask_glow = (x - render_x)**2 + (y - render_y)**2 <= glow_radius**2
+        # Create glow with reduced intensity
+        glow_color = [int(c * 0.3) for c in eye_color]  # 30% intensity for glow
+        img_array[mask_glow] = glow_color
+        
+        # Draw iris
         mask_iris = (x - render_x)**2 + (y - render_y)**2 <= iris_radius**2
         img_array[mask_iris] = eye_color  # Dynamic eye color
         
+        # Draw pupil
         mask_pupil = (x - render_x)**2 + (y - render_y)**2 <= pupil_radius**2
-        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
+        img_array[mask_pupil] = [255, 255, 255]  # White pupil
     
     # Convert RGB888 to RGB565 using NumPy (direct conversion - no scaling needed!)
     r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
