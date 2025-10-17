@@ -92,20 +92,20 @@ class EyeTracker:
         self.idle_animations = None
         self.idle_mode = False
         self.idle_start_time = None
-        self.idle_trigger_delay = np.random.uniform(5, 10)  # 5-10 seconds for testing
-        self.idle_resume_delay = np.random.uniform(5, 10)  # 5-10 seconds delay before resuming
+        self.idle_trigger_delay = np.random.uniform(10, 30)  # 5-10 seconds for testing
+        self.idle_resume_delay = np.random.uniform(20, 40)  # 5-10 seconds delay before resuming
         self.idle_animation_started = False
         
         # Dynamic eye sizing based on face size with smooth animation
         self.face_sizes = []  # Store last 5 face sizes
         self.max_face_history = 5
-        self.min_face_size = 50 * 50  # 50x50 pixels (2500 area)
+        self.min_face_size = 100 * 100  # 50x50 pixels (2500 area)
         self.max_face_size = 240 * 240  # 240x240 pixels (57600 area)
         self.current_eye_size_index = 15  # Current size is 15/20 (middle-large)
         self.target_eye_size_index = 15  # Target size for smooth animation
-        self.total_eye_sizes = 30  # 20 different eye sizes
+        self.total_eye_sizes = 30  # 30 different eye sizes
         self.base_eye_size = 40  # Base iris radius (current size)
-        self.eye_size_transition_speed = 0.1  # How fast eye size changes (0.1 = 10% per frame)
+        self.eye_size_transition_speed = 0.01  # How fast eye size changes (0.1 = 10% per frame)
         
         # Motion detection variables - Pi 5 optimized
         self.prev_frame = None
@@ -329,6 +329,8 @@ class EyeTracker:
                     print("No face detected for 5 seconds. Eyes returning to yellow...")
                     self.face_detected = False
                     self.target_eye_color = self.base_eye_color.copy()
+                    # Return to basic eye size when face not found
+                    self.target_eye_size_index = 15  # Middle size (basic size)
             
             # Exit face-following mode if no face
             if self.face_following_mode:
