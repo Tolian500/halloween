@@ -12,7 +12,12 @@ os.environ['QT_LOGGING_RULES'] = '*=false'
 
 import numpy as np
 import cv2
-from display_settings import WIDTH, HEIGHT
+# Import display settings - use Windows compatible version if on Windows
+import platform
+if platform.system() == "Windows":
+    from display_settings_windows import WIDTH, HEIGHT
+else:
+    from display_settings import WIDTH, HEIGHT
 
 def get_eye_colors():
     """Get the current eye colors from the template"""
