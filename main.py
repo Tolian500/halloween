@@ -16,7 +16,7 @@ from display_settings import (
 )
 
 # Import eye template
-from eye_template import create_eye_image, preview_eyes, get_eye_colors
+from eye_template import create_eye_image, preview_eyes, get_eye_colors, EYE_CONFIG
 
 # Import idle animations
 from idle_animations import IdleAnimations
@@ -99,16 +99,16 @@ class EyeTracker:
         self.idle_resume_delay = np.random.uniform(20, 40)  # 5-10 seconds delay before resuming
         self.idle_animation_started = False
         
-        # Dynamic eye sizing based on face size with smooth animation
+        # Dynamic pupil sizing based on face size with smooth animation
         self.face_sizes = []  # Store last 5 face sizes
         self.max_face_history = 5
         self.min_face_size = 100 * 100  # 50x50 pixels (2500 area)
         self.max_face_size = 240 * 240  # 240x240 pixels (57600 area)
-        self.current_eye_size_index = 15  # Current size is 15/20 (middle-large)
-        self.target_eye_size_index = 15  # Target size for smooth animation
-        self.total_eye_sizes = 30  # 30 different eye sizes
-        self.base_eye_size = 40  # Base iris radius (current size)
-        self.eye_size_transition_speed = 0.01  # How fast eye size changes (0.1 = 10% per frame)
+        self.current_pupil_size_index = 15  # Current pupil size index (middle)
+        self.target_pupil_size_index = 15  # Target pupil size for smooth animation
+        self.total_pupil_sizes = 30  # 30 different pupil sizes
+        self.base_pupil_size_factor = 1.0  # Base pupil size factor (1.0 = normal)
+        self.pupil_size_transition_speed = 0.01  # How fast pupil size changes
         
         # Motion detection variables - Pi 5 optimized
         self.prev_frame = None
@@ -281,8 +281,8 @@ class EyeTracker:
     
     def create_eye_image(self, eye_x, eye_y, blink_state=1.0, eye_cache=None):
         """Create eye image with blinking support + RGB565 pre-conversion + dynamic sizing"""
-        current_eye_size = self.get_current_eye_size()
-        return create_eye_image(eye_x, eye_y, blink_state, eye_cache, self.cache_size, self.current_eye_color, current_eye_size)
+        current_pupil_size_factor = self.get_current_pupil_size_factor()
+        return create_eye_image(eye_x, eye_y, blink_state, eye_cache, self.cache_size, self.current_eye_color, EYE_CONFIG['iris_radius'], self.face_detected, current_pupil_size_factor)
     
     def detect_face(self, frame):
         """Detect faces in the frame"""
@@ -341,8 +341,8 @@ class EyeTracker:
                     print("No face detected for 5 seconds. Eyes returning to yellow...")
                     self.face_detected = False
                     self.target_eye_color = self.base_eye_color.copy()
-                    # Return to basic eye size when face not found
-                    self.target_eye_size_index = 15  # Middle size (basic size)
+                    # Return to basic pupil size when face not found
+                    self.target_pupil_size_index = 15  # Middle size (basic size)
             
             # Exit face-following mode if no face
             if self.face_following_mode:
@@ -392,7 +392,7 @@ class EyeTracker:
         return (eye_x, eye_y)
     
     def update_face_size(self, faces):
-        """Update face size history and calculate eye size"""
+        """Update face size history and calculate pupil size"""
         if len(faces) > 0:
             # Use the largest face (most prominent)
             largest_face = max(faces, key=lambda f: f[2] * f[3])
@@ -410,43 +410,43 @@ class EyeTracker:
             if len(self.face_sizes) > 0:
                 avg_face_size = sum(self.face_sizes) / len(self.face_sizes)
                 
-                # Map face size to eye size index (0-19)
-                # Face size 50x50 (2500) -> smallest eyes (index 0)
-                # Face size 240x240 (57600) -> largest eyes (index 19)
+                # Map face size to pupil size index (0-29)
+                # Face size 50x50 (2500) -> smallest pupils (index 0)
+                # Face size 240x240 (57600) -> largest pupils (index 29)
                 face_ratio = (avg_face_size - self.min_face_size) / (self.max_face_size - self.min_face_size)
                 face_ratio = max(0, min(1, face_ratio))  # Clamp between 0 and 1
                 
-                # Map to eye size index (0-19)
-                self.target_eye_size_index = int(face_ratio * (self.total_eye_sizes - 1))
+                # Map to pupil size index (0-29)
+                self.target_pupil_size_index = int(face_ratio * (self.total_pupil_sizes - 1))
                 
-                # Log face size and target eye size
-                print(f"Face: {w}x{h} (Area: {face_area:.0f}), Avg: {avg_face_size:.0f}, Target Eye Size: {self.target_eye_size_index + 1}/20")
+                # Log face size and target pupil size
+                print(f"Face: {w}x{h} (Area: {face_area:.0f}), Avg: {avg_face_size:.0f}, Target Pupil Size: {self.target_pupil_size_index + 1}/30")
     
-    def update_eye_size_smoothly(self):
-        """Smoothly animate eye size towards target"""
+    def update_pupil_size_smoothly(self):
+        """Smoothly animate pupil size towards target"""
         # Calculate difference between current and target
-        size_diff = self.target_eye_size_index - self.current_eye_size_index
+        size_diff = self.target_pupil_size_index - self.current_pupil_size_index
         
         # If there's a difference, move towards target
         if abs(size_diff) > 0.1:  # Small threshold to avoid jitter
             # Move towards target by transition speed
-            move_amount = size_diff * self.eye_size_transition_speed
-            self.current_eye_size_index += move_amount
+            move_amount = size_diff * self.pupil_size_transition_speed
+            self.current_pupil_size_index += move_amount
             
             # Clamp to valid range
-            self.current_eye_size_index = max(0, min(self.total_eye_sizes - 1, self.current_eye_size_index))
+            self.current_pupil_size_index = max(0, min(self.total_pupil_sizes - 1, self.current_pupil_size_index))
     
-    def get_current_eye_size(self):
-        """Get current eye size based on face size"""
-        # Eye sizes range from 40 to 80 pixels radius (smallest size doubled)
-        min_eye_size = 40
-        max_eye_size = 80
+    def get_current_pupil_size_factor(self):
+        """Get current pupil size factor based on face size"""
+        # Pupil size factors range from 0.5 to 2.0 (smaller to larger pupils)
+        min_pupil_factor = 0.5
+        max_pupil_factor = 2.0
         
-        # Map index (0-29) to eye size (40-80)
-        size_ratio = self.current_eye_size_index / (self.total_eye_sizes - 1)
-        current_size = min_eye_size + (max_eye_size - min_eye_size) * size_ratio
+        # Map index (0-29) to pupil size factor (0.5-2.0)
+        size_ratio = self.current_pupil_size_index / (self.total_pupil_sizes - 1)
+        current_factor = min_pupil_factor + (max_pupil_factor - min_pupil_factor) * size_ratio
         
-        return int(current_size)
+        return current_factor
     
     def update_eye_color(self):
         """Smoothly transition eye color"""
@@ -838,8 +838,8 @@ class EyeTracker:
                 # Update idle animation if in idle mode
                 self.update_idle_animation()
                 
-                # Smooth eye size animation
-                self.update_eye_size_smoothly()
+                # Smooth pupil size animation
+                self.update_pupil_size_smoothly()
                 
                 # Handle blinking (more natural, human-like)
                 current_time = time.time()

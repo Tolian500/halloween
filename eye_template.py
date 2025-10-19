@@ -70,7 +70,7 @@ def get_eye_colors():
         'tracked_color': EYE_CONFIG['tracked_color']
     }
 
-def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50, eye_color=None, iris_radius=None):
+def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=50, eye_color=None, iris_radius=None, face_tracked=False, pupil_size_factor=1.0):
     """Create eye image with blinking support + RGB565 pre-conversion + dynamic sizing"""
     # Default eye color if not provided
     if eye_color is None:
@@ -82,12 +82,12 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
     
     # Iris is round (no width/height ratios)
     
-    # Determine which pupil settings to use based on eye color
-    is_tracked = tuple(eye_color) == tuple(EYE_CONFIG['tracked_color'])
-    pupil_config = EYE_CONFIG['tracked_pupil'] if is_tracked else EYE_CONFIG['normal_pupil']
+    # Determine which pupil settings to use based on face tracking state (not color)
+    pupil_config = EYE_CONFIG['tracked_pupil'] if face_tracked else EYE_CONFIG['normal_pupil']
     
-    # Calculate pupil dimensions
-    pupil_radius = int(iris_radius * pupil_config['size_ratio'])  # Base pupil size
+    # Calculate pupil dimensions with face size influence
+    base_pupil_radius = int(iris_radius * pupil_config['size_ratio'])  # Base pupil size
+    pupil_radius = int(base_pupil_radius * pupil_size_factor)  # Apply face size factor
     pupil_width = int(pupil_radius * pupil_config['width_ratio'])  # Width (1.0 for round, <1.0 for elliptical)
     pupil_height = int(pupil_radius * pupil_config['height_ratio'])  # Height
     
@@ -97,7 +97,9 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
     blink_key = round(blink_state * 10) / 10  # Cache different blink states
     color_key = tuple(eye_color)  # Add color to cache key
     size_key = iris_radius  # Add iris size to cache key
-    cache_key = (cache_x, cache_y, blink_key, color_key, size_key)
+    face_key = face_tracked  # Add face tracking state to cache key
+    pupil_size_key = round(pupil_size_factor * 10) / 10  # Add pupil size factor to cache key
+    cache_key = (cache_x, cache_y, blink_key, color_key, size_key, face_key, pupil_size_key)
     
     # Check cache first (cache stores RGB565 bytes directly!)
     if cache_key in eye_cache:
@@ -128,13 +130,65 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
         eyelid_top = render_y - iris_radius + (iris_radius * (1 - blink_state))
         eyelid_bottom = render_y + iris_radius - (iris_radius * (1 - blink_state))
         
-        # Draw iris (only visible part) - round shape
-        mask_iris = ((x - render_x)**2 + (y - render_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
-        img_array[mask_iris] = eye_color  # Dynamic eye color
+        # Add glow effect around iris (only visible part) - round shape for outer glow
+        glow_radius = iris_radius + EYE_CONFIG['glow_size']
+        mask_glow = ((x - render_x)**2 + (y - render_y)**2 <= glow_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+        # Create glow with configurable intensity
+        glow_color = [int(c * EYE_CONFIG['glow_intensity']) for c in eye_color]
+        img_array[mask_glow] = glow_color
         
-        # Draw pupil (only visible part) - elliptical shape
+        # Add bright edge highlight between glow and iris (only visible part)
+        highlight_width = EYE_CONFIG['edge_highlight']['width']
+        highlight_brightness = EYE_CONFIG['edge_highlight']['brightness']
+        highlight_alpha = EYE_CONFIG['edge_highlight']['alpha']
+        
+        # Create ring mask for the highlight
+        dist_squared = (x - render_x)**2 + (y - render_y)**2
+        outer_edge = iris_radius + highlight_width/2
+        inner_edge = iris_radius - highlight_width/2
+        mask_highlight = ((dist_squared >= inner_edge**2) & (dist_squared <= outer_edge**2)) & (y >= eyelid_top) & (y <= eyelid_bottom)
+        
+        # Create bright highlight color
+        highlight_color = np.clip(np.array(eye_color) * highlight_brightness, 0, 255).astype(np.uint8)
+        
+        # Blend highlight with existing colors
+        img_array[mask_highlight] = (
+            (1 - highlight_alpha) * img_array[mask_highlight] + 
+            highlight_alpha * highlight_color
+        ).astype(np.uint8)
+        
+        # Draw iris with gradient (only visible part) - round shape
+        mask_iris = ((x - render_x)**2 + (y - render_y)**2 <= iris_radius**2) & (y >= eyelid_top) & (y <= eyelid_bottom)
+        
+        # Calculate normalized distance from center (0.0 at center, 1.0 at edge)
+        dist_squared_iris = (x - render_x)**2 + (y - render_y)**2
+        dist_normalized = np.sqrt(dist_squared_iris[mask_iris]) / iris_radius
+        
+        # Create gradient multiplier (1.0 means no change)
+        gradient_size = EYE_CONFIG['iris_gradient']['gradient_size']
+        center_brightness = EYE_CONFIG['iris_gradient']['center_brightness']
+        edge_darkness = EYE_CONFIG['iris_gradient']['edge_darkness']
+        
+        # Smooth transition from center brightness to edge darkness
+        gradient_mult = np.ones_like(dist_normalized)
+        center_mask = dist_normalized <= gradient_size
+        gradient_mask = (dist_normalized > gradient_size)
+        
+        # Bright center
+        gradient_mult[center_mask] = center_brightness
+        
+        # Gradient from center to edge
+        gradient_range = dist_normalized[gradient_mask]
+        gradient_mult[gradient_mask] = center_brightness + (edge_darkness - center_brightness) * ((gradient_range - gradient_size) / (1.0 - gradient_size))
+        
+        # Apply gradient to each color channel
+        iris_color = np.array(eye_color)
+        gradient_colors = np.clip(iris_color.reshape(1, 3) * gradient_mult.reshape(-1, 1), 0, 255).astype(np.uint8)
+        img_array[mask_iris] = gradient_colors  # Apply gradient colors
+        
+        # Draw pupil (only visible part) - elliptical shape with BLACK color
         mask_pupil = (((x - render_x)**2 / (pupil_width**2)) + ((y - render_y)**2 / (pupil_height**2)) <= 1) & (y >= eyelid_top) & (y <= eyelid_bottom)
-        img_array[mask_pupil] = [255, 255, 255]  # White pupil
+        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
     else:
         # Fully open eye
         # Add glow effect around iris - round shape for outer glow
@@ -193,9 +247,9 @@ def create_eye_image(eye_x, eye_y, blink_state=1.0, eye_cache=None, cache_size=5
         gradient_colors = np.clip(iris_color.reshape(1, 3) * gradient_mult.reshape(-1, 1), 0, 255).astype(np.uint8)
         img_array[mask_iris] = gradient_colors  # Apply gradient colors
         
-        # Draw pupil - elliptical shape
+        # Draw pupil - elliptical shape with BLACK color
         mask_pupil = ((x - render_x)**2 / (pupil_width**2)) + ((y - render_y)**2 / (pupil_height**2)) <= 1
-        img_array[mask_pupil] = [255, 255, 255]  # White pupil
+        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
     
     # Convert RGB888 to RGB565 using NumPy (direct conversion - no scaling needed!)
     r = (img_array[:, :, 0] >> 3).astype(np.uint16)  # 5 bits
@@ -251,15 +305,14 @@ def preview_eyes():
     tracked_color = eye_colors['tracked_color']
     
     # Create images directly in BGR format for preview
-    def create_eye_preview(eye_x, eye_y, eye_color):
+    def create_eye_preview(eye_x, eye_y, eye_color, face_tracked=False):
         """Create eye image directly in BGR format for preview"""
         img_array = np.zeros((WIDTH, HEIGHT, 3), dtype=np.uint8)
         
         iris_radius = EYE_CONFIG['iris_radius']
         
-        # Determine which pupil settings to use based on eye color
-        is_tracked = tuple(eye_color) == tuple(EYE_CONFIG['tracked_color'])
-        pupil_config = EYE_CONFIG['tracked_pupil'] if is_tracked else EYE_CONFIG['normal_pupil']
+        # Determine which pupil settings to use based on face tracking state (not color)
+        pupil_config = EYE_CONFIG['tracked_pupil'] if face_tracked else EYE_CONFIG['normal_pupil']
         
         # Calculate pupil dimensions
         pupil_radius = int(iris_radius * pupil_config['size_ratio'])
@@ -328,23 +381,23 @@ def preview_eyes():
         gradient_colors = np.clip(iris_color.reshape(1, 3) * gradient_mult.reshape(-1, 1), 0, 255).astype(np.uint8)
         img_array[mask_iris] = gradient_colors  # Apply gradient colors
         
-        # Draw pupil - elliptical shape
+        # Draw pupil - elliptical shape with BLACK color
         mask_pupil = ((x - render_x)**2 / (pupil_width**2)) + ((y - render_y)**2 / (pupil_height**2)) <= 1
-        img_array[mask_pupil] = [15, 15, 15]  # White pupil
+        img_array[mask_pupil] = [0, 0, 0]  # Black pupil
         
         # Convert RGB to BGR for OpenCV
         return cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
     
     # Create both eyes
-    left_eye_bgr = create_eye_preview(left_eye_x, left_eye_y, normal_color)
-    right_eye_bgr = create_eye_preview(right_eye_x, right_eye_y, tracked_color)
+    left_eye_bgr = create_eye_preview(left_eye_x, left_eye_y, normal_color, face_tracked=False)
+    right_eye_bgr = create_eye_preview(right_eye_x, right_eye_y, tracked_color, face_tracked=True)
     
     # Combine both eyes side by side
     combined = np.hstack([left_eye_bgr, right_eye_bgr])
     
     # Add labels
-    cv2.putText(combined, "Normal (Yellow)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(combined, "Tracked (Red)", (WIDTH + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(combined, "Normal (Cat Pupil)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(combined, "Face Tracked (Round Pupil)", (WIDTH + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     
     # Show the preview
     cv2.imshow("Eye Template Preview", combined)
