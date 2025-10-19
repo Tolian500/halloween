@@ -320,9 +320,6 @@ class EyeTracker:
             # Reset the timer
             self.last_face_detection_time = current_time
             
-            # Reset motion timer to prevent idle animations when face is present
-            self.last_motion_time = current_time
-            
             # If in idle mode and face detected, exit idle mode
             if self.idle_mode:
                 print("Face detected! Exiting idle mode...")
@@ -366,7 +363,7 @@ class EyeTracker:
             # Only enter if there's been no recent motion
             time_since_motion = current_time - self.last_motion_time
             if not self.face_following_mode and time_since_motion > 1.0:  # 1 second of no motion
-                print("Entering face-following mode! Eyes will track face for 5 seconds...")
+                print(f"Entering face-following mode! Eyes will track face for 7 seconds... (No motion for {time_since_motion:.1f}s)")
                 self.face_following_mode = True
                 self.last_face_following_time = current_time
             
@@ -528,6 +525,10 @@ class EyeTracker:
         elif self.face_following_mode and self.current_face_center:
             # Face-following mode - use face position
             eye_x, eye_y = self.get_eye_position_from_face(self.current_face_center)
+            # Debug: Print occasionally when in face-following mode
+            if int(time.time()) != getattr(self, '_last_face_following_debug', -1):
+                self._last_face_following_debug = int(time.time())
+                print(f"Face-following mode: Eyes tracking face at ({eye_x:.0f}, {eye_y:.0f})")
             
             # Add to motion history for smoothing
             self.motion_history.append((eye_x, eye_y))
