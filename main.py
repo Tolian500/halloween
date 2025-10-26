@@ -40,6 +40,7 @@ class EyeTracker:
         self.current_left_eye = (WIDTH//2, HEIGHT//2)
         self.current_right_eye = (WIDTH//2, HEIGHT//2)
         self.eye_movement_speed = 0.08  # Much slower, smoother movement to reduce shaking
+        self.eye_movement_speed_slow = 0.04  # 2x slower for smooth transition from face-following to normal
         self.last_motion_time = time.time()
         self.motion_timeout = 2.0  # Return to center after 2 seconds of no motion
         
@@ -90,6 +91,8 @@ class EyeTracker:
         self.last_face_following_time = time.time()
         self.current_face_center = None
         self.last_motion_time = time.time()  # Track last motion for interruption
+        self.transitioning_from_face_following = False  # Flag for smooth transition
+        self.face_following_exit_time = 0  # Time when face-following mode was exited
         
         # Idle animation system
         self.idle_animations = None
@@ -499,9 +502,11 @@ class EyeTracker:
             self.last_motion_time = current_time
             # If in face-following mode and motion detected, exit face-following
             if self.face_following_mode:
-                print("Motion detected! Exiting face-following mode...")
+                print("Motion detected! Exiting face-following mode with slow transition...")
                 self.face_following_mode = False
                 self.current_face_center = None
+                self.transitioning_from_face_following = True
+                self.face_following_exit_time = current_time
             
             # If in idle mode and motion detected, exit idle mode
             if self.idle_mode:
@@ -511,9 +516,11 @@ class EyeTracker:
         # Check if face-following mode should timeout
         if self.face_following_mode:
             if current_time - self.last_face_following_time > self.face_following_timeout:
-                print("Face-following timeout. Returning to motion detection...")
+                print("Face-following timeout. Returning to motion detection with slow transition...")
                 self.face_following_mode = False
                 self.current_face_center = None
+                self.transitioning_from_face_following = True
+                self.face_following_exit_time = current_time
         
         # Check for idle animation trigger
         self.check_idle_animation_trigger(current_time)
@@ -598,12 +605,24 @@ class EyeTracker:
     
     def smooth_eye_movement(self):
         """Smoothly interpolate eye movement for both eyes"""
+        # Choose movement speed based on transition state
+        current_time = time.time()
+        if self.transitioning_from_face_following:
+            # Use slower speed for 2 seconds after exiting face-following mode
+            if current_time - self.face_following_exit_time > 2.0:
+                self.transitioning_from_face_following = False
+                movement_speed = self.eye_movement_speed
+            else:
+                movement_speed = self.eye_movement_speed_slow
+        else:
+            movement_speed = self.eye_movement_speed
+        
         # Smooth left eye movement
         current_left_x, current_left_y = self.current_left_eye
         target_left_x, target_left_y = self.target_left_eye
         
-        new_left_x = current_left_x + (target_left_x - current_left_x) * self.eye_movement_speed
-        new_left_y = current_left_y + (target_left_y - current_left_y) * self.eye_movement_speed
+        new_left_x = current_left_x + (target_left_x - current_left_x) * movement_speed
+        new_left_y = current_left_y + (target_left_y - current_left_y) * movement_speed
         
         self.current_left_eye = (new_left_x, new_left_y)
         
@@ -611,8 +630,8 @@ class EyeTracker:
         current_right_x, current_right_y = self.current_right_eye
         target_right_x, target_right_y = self.target_right_eye
         
-        new_right_x = current_right_x + (target_right_x - current_right_x) * self.eye_movement_speed
-        new_right_y = current_right_y + (target_right_y - current_right_y) * self.eye_movement_speed
+        new_right_x = current_right_x + (target_right_x - current_right_x) * movement_speed
+        new_right_y = current_right_y + (target_right_y - current_right_y) * movement_speed
         
         self.current_right_eye = (new_right_x, new_right_y)
         
