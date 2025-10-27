@@ -1,0 +1,26 @@
+[Unit]
+Description=Halloween Eye Tracker Service
+After=network.target
+# Wait for gpu-mem and display to be ready
+After=raspi-config.service
+After=graphical.target
+
+[Service]
+Type=simple
+User=tolian500
+WorkingDirectory=/home/tolian500/Coding/halloween
+# Add 10 second delay before starting to allow hardware to warm up
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 /home/tolian500/Coding/halloween/main.py --no-preview
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="DISPLAY=:0"
+Environment="QT_LOGGING_RULES=*=false"
+
+[Install]
+WantedBy=multi-user.target
+
